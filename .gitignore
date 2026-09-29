@@ -20,8 +20,6 @@ Firmware/
 code_final*
 
 # Local working notes (not part of the published project)
-CLAUDE.md
-.claude/
 docs/
 context.md
 wwwroot/*.backup.html

@@ -35,8 +35,6 @@ code_final*
 *.lscache
 
 # Local working notes, not part of the deployable app
-CLAUDE.md
-.claude/
 docs/
 context.md
 *.md
