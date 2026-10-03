@@ -13,6 +13,11 @@
     <Content Remove="tests/**" />
     <None Remove="tests/**" />
     <EmbeddedResource Remove="tests/**" />
+    <!-- Same for the NBomber load generator under loadgen/, a separate program. -->
+    <Compile Remove="loadgen/**" />
+    <Content Remove="loadgen/**" />
+    <None Remove="loadgen/**" />
+    <EmbeddedResource Remove="loadgen/**" />
   </ItemGroup>
 
   <ItemGroup>
