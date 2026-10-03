@@ -444,6 +444,34 @@ public class JobADO : IJobDataAccess
         return results;
     }
 
+    public List<Job> GetStaleJobs(DateTime now)
+    {
+        var results = new List<Job>();
+
+        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
+        conn.Open();
+
+        // Global sweep: only expired Claimed/Executing rows leave the database, never the whole job table.
+        using var cmd = new NpgsqlCommand(
+            $@"SELECT {JobColumns}
+              FROM public.job
+              WHERE status IN ('Claimed', 'Executing')
+                AND leaseexpiresatutc IS NOT NULL
+                AND leaseexpiresatutc <= @now
+              ORDER BY createddate, id;", conn);
+
+        cmd.Parameters.AddWithValue("now", now);
+
+        using var dr = cmd.ExecuteReader();
+
+        while (dr.Read())
+        {
+            results.Add(MapJob(dr));
+        }
+
+        return results;
+    }
+
     public Job? TryClaimJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime leaseExpiresAtUtc)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());

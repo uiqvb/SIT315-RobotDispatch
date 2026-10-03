@@ -198,6 +198,7 @@ static void RegisterServices(IServiceCollection services)
     services.AddScoped<ILiveControlService, LiveControlService>();
 
     // Drains expired leases without waiting for the stalled robot to poll again.
+    services.AddSingleton<PostgresAdvisoryLock>(); //one sweeper across replicas, held by PostgreSQL
     services.AddHostedService<StaleWorkExpiryService>();
 }
 

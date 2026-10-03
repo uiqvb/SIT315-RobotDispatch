@@ -54,9 +54,8 @@ public class WorkDispatchService : IWorkDispatchService
         var configuredLeaseMinutes = int.TryParse(_configuration["WorkDispatch:LeaseMinutes"], out var parsedLeaseMinutes) ? parsedLeaseMinutes : 5;
         var leaseMinutes = request.LeaseMinutes > 0 ? request.LeaseMinutes : configuredLeaseMinutes;
 
-        ExpireStaleWork(deviceId, now); //redundant shouldnt be the job here ffs. Use the inbuilt stalework expirerm job and make it run from 30s to every 10s 
+        // Stale cleanup no longer runs here; StaleWorkExpiryService owns it on a 15 s timer.
 
-        
         // a step that can be physically dispatched. The limit prevents an accidental
         // infinite loop if data is corrupt.
         for (var i = 0; i < 50; i++) //search for oldest job, if corrupt then search for next, if corrupt next... do this at most 50 times. 
@@ -98,18 +97,15 @@ public class WorkDispatchService : IWorkDispatchService
     {
         var now = DateTime.UtcNow;
 
-        var staleJobs = _jobDataAccess.GetJobs()
-            .Where(x => (x.Status.Equals("Claimed", StringComparison.OrdinalIgnoreCase) || x.Status.Equals("Executing", StringComparison.OrdinalIgnoreCase))
-                        && x.LeaseExpiresAtUtc.HasValue
-                        && x.LeaseExpiresAtUtc.Value <= now)
-            .ToList();
+        var staleJobs = _jobDataAccess.GetStaleJobs(now); //PostgreSQL returns only expired rows across every device
 
-        foreach (var deviceId in staleJobs.Select(x => x.DeviceId).Distinct())
+        var settled = 0;
+        foreach (var staleJob in staleJobs)
         {
-            ExpireStaleWork(deviceId, now);
+            if (SettleStaleJob(staleJob, now)) settled++; //each job settled straight from this list, no second query per device
         }
 
-        return staleJobs.Count;
+        return settled;
     }
 
     public OfflineRollbackReconcileResponse ReportOfflineRollback(int deviceId, ReportOfflineRollbackRequest request, int deviceCredentialId, int authenticatedDeviceId)
@@ -540,33 +536,40 @@ public class WorkDispatchService : IWorkDispatchService
 
         foreach (var staleJob in staleJobs)
         {
-            // Each transition re-checks the row, so a robot that started or finished the job since the SELECT wins.
-            if (staleJob.Status.Equals("Claimed", StringComparison.OrdinalIgnoreCase))
+            SettleStaleJob(staleJob, now);
+        }
+    }
+
+    // Returns true only if this call actually changed the row.
+    private bool SettleStaleJob(Job staleJob, DateTime now)
+    {
+        // Each transition re-checks the row, so a robot that started or finished the job since the SELECT wins.
+        if (staleJob.Status.Equals("Claimed", StringComparison.OrdinalIgnoreCase))
+        {
+            return _jobDataAccess.TryRequeueStaleClaimedJob(staleJob.Id, staleJob.ClaimedAtUtc, now); //Claimed -> Queued, only if it is still this stale claim
+        }
+
+        if (!_jobDataAccess.TryExpireStaleExecutingJob(staleJob.Id, staleJob.ClaimedAtUtc, now)) return false; //Executing -> Expired; robot finished first, so skip side effects
+
+        staleJob.Status = "Expired";
+        staleJob.ModifiedDate = now;
+        InsertJobHistory(staleJob, false, true, null, "LEASE_EXPIRED", "Job lease expired while executing. It was not automatically retried.", now);
+        InvalidatePose(staleJob.DeviceId, "Grid pose invalidated because an executing job expired.", now);
+
+        if (staleJob.WorkflowId.HasValue)
+        {
+            var workflow = _workflowDataAccess.GetWorkflowById(staleJob.WorkflowId.Value);
+            if (workflow != null)
             {
-                _jobDataAccess.TryRequeueStaleClaimedJob(staleJob.Id, staleJob.ClaimedAtUtc, now); //Claimed -> Queued, only if it is still this stale claim
-                continue;
-            }
-
-            if (!_jobDataAccess.TryExpireStaleExecutingJob(staleJob.Id, staleJob.ClaimedAtUtc, now)) continue; //Executing -> Expired; robot finished first, so skip side effects
-
-            staleJob.Status = "Expired";
-            staleJob.ModifiedDate = now;
-            InsertJobHistory(staleJob, false, true, null, "LEASE_EXPIRED", "Job lease expired while executing. It was not automatically retried.", now);
-            InvalidatePose(staleJob.DeviceId, "Grid pose invalidated because an executing job expired.", now);
-
-            if (staleJob.WorkflowId.HasValue)
-            {
-                var workflow = _workflowDataAccess.GetWorkflowById(staleJob.WorkflowId.Value);
-                if (workflow != null)
-                {
-                    CancelQueuedWorkflowJobs(workflow.Id, now);
-                    workflow.Status = "Failed";
-                    workflow.ModifiedDate = now;
-                    _workflowDataAccess.UpdateWorkflow(workflow.Id, workflow);
-                    InsertWorkflowHistoryIfMissing(workflow, false, staleJob.StepNumber, "A workflow step expired while executing.", now);
-                }
+                CancelQueuedWorkflowJobs(workflow.Id, now);
+                workflow.Status = "Failed";
+                workflow.ModifiedDate = now;
+                _workflowDataAccess.UpdateWorkflow(workflow.Id, workflow);
+                InsertWorkflowHistoryIfMissing(workflow, false, staleJob.StepNumber, "A workflow step expired while executing.", now);
             }
         }
+
+        return true;
     }
 
     private void MarkParentWorkflowClaimed(int? workflowId, int deviceCredentialId, DateTime now, int leaseMinutes)

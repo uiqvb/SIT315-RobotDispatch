@@ -25,6 +25,7 @@ public interface IJobDataAccess
 
     // Guarded transitions: each only changes the row if it is still in the expected state, and returns null/false otherwise.
     List<Job> GetStaleJobsByDeviceId(int deviceId, DateTime now);
+    List<Job> GetStaleJobs(DateTime now);
     Job? TryClaimJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime leaseExpiresAtUtc);
     bool TryUpdateQueuedJobStatus(int jobId, string newStatus, DateTime modifiedDate);
     Job? TryMarkClaimedJobExecuting(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime modifiedDate);
