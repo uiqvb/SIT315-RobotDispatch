@@ -13,7 +13,7 @@ public static class RobotScenario
 {
     private const int MaxAttemptsOn429 = 20;
 
-    public static void Run(string apiUrl, int robots, TimeSpan duration, TimeSpan warmUp, string label, string outPath)
+    public static void Run(string apiUrl, int robots, TimeSpan duration, TimeSpan warmUp, string label, string outPath, string reportFolder = "reports")
     {
         var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(1) }; //re-resolves DNS each minute, so a load balancer's changing IPs get picked up
         using var http = new HttpClient(handler) { BaseAddress = new Uri(apiUrl), Timeout = TimeSpan.FromSeconds(60) };
@@ -80,6 +80,8 @@ public static class RobotScenario
             Interlocked.Increment(ref counters.CompletedIncludingWarmUp);
             return Response.Ok();
         })
+        .WithRestartIterationOnFail(false) //NBomber restarts the loop on any failed step by default, which skipped the Retry-After wait and abandoned claimed jobs
+        .WithMaxFailCount(int.MaxValue) //failures under overload are results to record, not a reason to stop the run
         .WithWarmUpDuration(warmUp)
         .WithLoadSimulations(Simulation.KeepConstant(copies: robots, during: duration)); //closed loop: each robot waits for every reply before its next request
 
@@ -87,7 +89,7 @@ public static class RobotScenario
             .RegisterScenarios(scenario)
             .WithTestSuite("robot-dispatch")
             .WithTestName($"{label}-{robots}-robots")
-            .WithReportFolder(Path.Combine("reports", $"{label}-{robots}-robots"))
+            .WithReportFolder(Path.Combine(reportFolder, $"{label}-{robots}-robots"))
             .Run();
 
         BenchResults.Append(outPath, label, robots, duration, warmUp, stats, counters.CompletedIncludingWarmUp, drained.Count(x => x));

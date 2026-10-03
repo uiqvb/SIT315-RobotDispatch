@@ -21,7 +21,7 @@ switch (command)
         break;
     case "run":
         RobotScenario.Run(options.Require("api"), options.Int("robots"), TimeSpan.FromSeconds(options.Int("duration")),
-            TimeSpan.FromSeconds(options.Int("warmup")), options.Require("label"), options.Require("out"));
+            TimeSpan.FromSeconds(options.Int("warmup")), options.Require("label"), options.Require("out"), options.Get("reports", "reports"));
         break;
     case "check":
         await new BenchDatabase(options.Require("db")).CheckAsync(options.Require("label"), options.Int("robots"), options.Require("out"));

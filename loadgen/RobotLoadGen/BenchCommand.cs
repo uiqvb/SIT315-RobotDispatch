@@ -38,7 +38,7 @@ public static class BenchCommand
             {
                 Console.WriteLine($"=== {label}, {robots} robots, repeat {repeat} ===");
                 await database.SeedAsync(robots, backlog, hashKey, allowAnyDatabase);
-                RobotScenario.Run(api, robots, duration, warmUp, label, Path.Combine(results, "bench.csv"));
+                RobotScenario.Run(api, robots, duration, warmUp, label, Path.Combine(results, "bench.csv"), Path.Combine(results, "nbomber")); //NBomber's own reports stay with the results
                 await database.CheckAsync(label, robots, Path.Combine(results, "db_check.csv"));
             }
         }
