@@ -45,6 +45,11 @@ Dockerfile
 .dockerignore
 docker-compose*.yml
 
+# Load generator outputs: exported API copies, NBomber reports, benchmark results
+loadgen/.work/
+loadgen/results/
+loadgen/RobotLoadGen/reports/
+
 # Dashboard backups and stray archives
 wwwroot/*.backup.html
 wwwroot/index.5tab-backup.html

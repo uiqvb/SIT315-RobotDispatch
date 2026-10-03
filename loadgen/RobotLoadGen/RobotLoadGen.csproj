@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -9,6 +9,11 @@
 
   <ItemGroup>
     <PackageReference Include="NBomber" Version="6.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Seeds credentials with the API's own hasher, so the stored hash is exactly what the API verifies. -->
+    <ProjectReference Include="..\..\RobotControllerApi.csproj" />
   </ItemGroup>
 
 </Project>
