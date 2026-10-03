@@ -100,12 +100,13 @@ public class JobsController : ControllerBase
 
     [Authorize(Policy = AuthorizationPolicies.DeviceAdapter)]
     [HttpPatch("/api/adapter/jobs/{jobId}/started")]
-    public ActionResult MarkJobStarted(int jobId)
+    public ActionResult MarkJobStarted(int jobId, StartJobRequest request)
     {
         try
         {
             var credentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
-            var success = _service.MarkJobStarted(jobId, credentialId);
+            var deviceId = _currentUserAccessor.GetRequiredDeviceId(User); //device the credential authenticated as, from the auth claims
+            var success = _service.MarkJobStarted(jobId, request, credentialId, deviceId); //request carries the claimedAtUtc the robot echoed back
             if (!success) return NotFound();
             return NoContent();
         }
@@ -121,7 +122,8 @@ public class JobsController : ControllerBase
         try
         {
             var credentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
-            var success = _service.MarkJobCompleted(jobId, request, credentialId);
+            var deviceId = _currentUserAccessor.GetRequiredDeviceId(User); //device the credential authenticated as, from the auth claims
+            var success = _service.MarkJobCompleted(jobId, request, credentialId, deviceId);
             if (!success) return NotFound();
             return NoContent();
         }
@@ -137,7 +139,8 @@ public class JobsController : ControllerBase
         try
         {
             var credentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
-            var success = _service.MarkJobFailed(jobId, request, credentialId);
+            var deviceId = _currentUserAccessor.GetRequiredDeviceId(User); //device the credential authenticated as, from the auth claims
+            var success = _service.MarkJobFailed(jobId, request, credentialId, deviceId);
             if (!success) return NotFound();
             return NoContent();
         }

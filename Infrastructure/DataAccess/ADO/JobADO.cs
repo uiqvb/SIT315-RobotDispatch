@@ -1,4 +1,5 @@
 using Npgsql;
+using NpgsqlTypes;
 using RobotControllerApi.BoundedContexts.Jobs.Models;
 using RobotControllerApi.BoundedContexts.Jobs.Persistence;
 
@@ -409,6 +410,166 @@ public class JobADO : IJobDataAccess
         cmd.Parameters.AddWithValue("deviceId", deviceId);
 
         return (bool)(cmd.ExecuteScalar() ?? false);
+    }
+
+    private const string JobColumns = "id, deviceid, workflowid, stepnumber, commandcatalogueid, payloadjson, providertype, status, requestedbyappuserid, claimedbydevicecredentialid, claimedatutc, leaseexpiresatutc, isrollback, rollbackofjobhistoryid, createddate, modifieddate";
+
+    public List<Job> GetStaleJobsByDeviceId(int deviceId, DateTime now)
+    {
+        var results = new List<Job>();
+
+        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
+        conn.Open();
+
+        // Filters in SQL, so only stale rows cross the wire instead of the device's whole job history.
+        using var cmd = new NpgsqlCommand(
+            $@"SELECT {JobColumns}
+              FROM public.job
+              WHERE deviceid = @deviceId
+                AND status IN ('Claimed', 'Executing')
+                AND leaseexpiresatutc IS NOT NULL
+                AND leaseexpiresatutc <= @now
+              ORDER BY createddate, id;", conn);
+
+        cmd.Parameters.AddWithValue("deviceId", deviceId);
+        cmd.Parameters.AddWithValue("now", now);
+
+        using var dr = cmd.ExecuteReader();
+
+        while (dr.Read())
+        {
+            results.Add(MapJob(dr));
+        }
+
+        return results;
+    }
+
+    public Job? TryClaimJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime leaseExpiresAtUtc)
+    {
+        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
+        conn.Open();
+
+        // Only one concurrent caller can match status = 'Queued'; every other caller gets zero rows.
+        using var cmd = new NpgsqlCommand(
+            $@"UPDATE public.job
+              SET status = 'Claimed',
+                  claimedbydevicecredentialid = @deviceCredentialId,
+                  claimedatutc = @claimedAtUtc,
+                  leaseexpiresatutc = @leaseExpiresAtUtc,
+                  modifieddate = @claimedAtUtc
+              WHERE id = @id
+                AND status = 'Queued'
+              RETURNING {JobColumns};", conn);
+
+        cmd.Parameters.AddWithValue("id", jobId);
+        cmd.Parameters.AddWithValue("deviceCredentialId", deviceCredentialId);
+        cmd.Parameters.AddWithValue("claimedAtUtc", claimedAtUtc);
+        cmd.Parameters.AddWithValue("leaseExpiresAtUtc", leaseExpiresAtUtc);
+
+        using var dr = cmd.ExecuteReader();
+
+        return dr.Read() ? MapJob(dr) : null;
+    }
+
+    public bool TryUpdateQueuedJobStatus(int jobId, string newStatus, DateTime modifiedDate)
+    {
+        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
+        conn.Open();
+
+        // Used for cancel and validation-fail writes, which must never land on a job someone already claimed.
+        using var cmd = new NpgsqlCommand(
+            @"UPDATE public.job
+              SET status = @newStatus,
+                  modifieddate = @modifiedDate
+              WHERE id = @id
+                AND status = 'Queued';", conn);
+
+        cmd.Parameters.AddWithValue("id", jobId);
+        cmd.Parameters.AddWithValue("newStatus", newStatus);
+        cmd.Parameters.AddWithValue("modifiedDate", modifiedDate);
+
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
+    public Job? TryMarkClaimedJobExecuting(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime modifiedDate)
+    {
+        //started is the same guarded update, from Claimed only
+        return TryFinishClaimedJob(jobId, deviceCredentialId, claimedAtUtc, new[] { "Claimed" }, "Executing", modifiedDate);
+    }
+
+    public Job? TryFinishClaimedJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, string[] fromStatuses, string newStatus, DateTime modifiedDate)
+    {
+        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
+        conn.Open();
+
+        // claimedatutc pins the exact claim, so a late request from an earlier claim of the same job matches nothing.
+        using var cmd = new NpgsqlCommand(
+            $@"UPDATE public.job
+              SET status = @newStatus,
+                  modifieddate = @modifiedDate
+              WHERE id = @id
+                AND status = ANY(@fromStatuses)
+                AND claimedbydevicecredentialid = @deviceCredentialId
+                AND claimedatutc = @claimedAtUtc
+              RETURNING {JobColumns};", conn);
+
+        cmd.Parameters.AddWithValue("id", jobId);
+        cmd.Parameters.AddWithValue("newStatus", newStatus);
+        cmd.Parameters.AddWithValue("modifiedDate", modifiedDate);
+        cmd.Parameters.AddWithValue("fromStatuses", fromStatuses);
+        cmd.Parameters.AddWithValue("deviceCredentialId", deviceCredentialId);
+        cmd.Parameters.AddWithValue("claimedAtUtc", claimedAtUtc);
+
+        using var dr = cmd.ExecuteReader();
+
+        return dr.Read() ? MapJob(dr) : null;
+    }
+
+    public bool TryRequeueStaleClaimedJob(int jobId, DateTime? claimedAtUtc, DateTime now)
+    {
+        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
+        conn.Open();
+
+        // Requeues only if the row is still the same claim and its lease really has passed.
+        using var cmd = new NpgsqlCommand(
+            @"UPDATE public.job
+              SET status = 'Queued',
+                  claimedbydevicecredentialid = NULL,
+                  claimedatutc = NULL,
+                  leaseexpiresatutc = NULL,
+                  modifieddate = @now
+              WHERE id = @id
+                AND status = 'Claimed'
+                AND claimedatutc IS NOT DISTINCT FROM @claimedAtUtc
+                AND leaseexpiresatutc <= @now;", conn);
+
+        cmd.Parameters.AddWithValue("id", jobId);
+        cmd.Parameters.Add(new NpgsqlParameter("claimedAtUtc", NpgsqlDbType.Timestamp) { Value = (object?)claimedAtUtc ?? DBNull.Value });
+        cmd.Parameters.AddWithValue("now", now);
+
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
+    public bool TryExpireStaleExecutingJob(int jobId, DateTime? claimedAtUtc, DateTime now)
+    {
+        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
+        conn.Open();
+
+        // Expires only if the robot has not completed or failed this claim in the meantime.
+        using var cmd = new NpgsqlCommand(
+            @"UPDATE public.job
+              SET status = 'Expired',
+                  modifieddate = @now
+              WHERE id = @id
+                AND status = 'Executing'
+                AND claimedatutc IS NOT DISTINCT FROM @claimedAtUtc
+                AND leaseexpiresatutc <= @now;", conn);
+
+        cmd.Parameters.AddWithValue("id", jobId);
+        cmd.Parameters.Add(new NpgsqlParameter("claimedAtUtc", NpgsqlDbType.Timestamp) { Value = (object?)claimedAtUtc ?? DBNull.Value });
+        cmd.Parameters.AddWithValue("now", now);
+
+        return cmd.ExecuteNonQuery() > 0;
     }
 
     private static void AddParameters(NpgsqlCommand cmd, Job model)

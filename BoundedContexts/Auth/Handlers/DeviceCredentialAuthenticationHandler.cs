@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
 using RobotControllerApi.BoundedContexts.Auth.Constants;
+using RobotControllerApi.BoundedContexts.DeviceCredentials.Models;
 using RobotControllerApi.BoundedContexts.DeviceCredentials.Persistence;
 using RobotControllerApi.BoundedContexts.DeviceCredentials.Services;
 using RobotControllerApi.BoundedContexts.Devices.Persistence;
@@ -18,6 +19,7 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
     private readonly IDeviceCredentialDataAccess _credentials;
     private readonly IDeviceDataAccess _devices;
     private readonly MultiDeviceCredentialSecretHashService _secretHasher;
+    private readonly IConfiguration _configuration;
 
     public DeviceCredentialAuthenticationHandler(
         IOptionsMonitor<AuthenticationSchemeOptions> options,
@@ -25,12 +27,14 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
         UrlEncoder encoder,
         IDeviceCredentialDataAccess credentials,
         IDeviceDataAccess devices,
-        MultiDeviceCredentialSecretHashService secretHasher)
+        MultiDeviceCredentialSecretHashService secretHasher,
+        IConfiguration configuration)
         : base(options, logger, encoder)
     {
         _credentials = credentials;
         _devices = devices;
         _secretHasher = secretHasher;
+        _configuration = configuration;
     }
 
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -58,8 +62,7 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
             return FailAuthentication();
         }
 
-        var credential = _credentials.GetDeviceCredentials()
-            .FirstOrDefault(x => string.Equals(x.CredentialIdentifier, credentialIdentifier, StringComparison.OrdinalIgnoreCase));
+        var credential = _credentials.GetDeviceCredentialByCredentialIdentifier(credentialIdentifier); //one row by identifier, not the whole table
 
         if (credential == null)
         {
@@ -93,18 +96,7 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
             return FailAuthentication();
         }
 
-        try
-        {
-            credential.LastUsedAtUtc = DateTime.UtcNow;
-            credential.LastUsedIpAddress = Context.Connection.RemoteIpAddress?.ToString();
-            credential.LastUsedUserAgent = Request.Headers.UserAgent.ToString();
-            credential.ModifiedDate = DateTime.UtcNow;
-            _credentials.UpdateDeviceCredential(credential.Id, credential);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogWarning(ex, "Failed to update last-used metadata for device credential {CredentialId}.", credential.Id);
-        }
+        PersistLastUsedIfDue(credential); //usage metadata only; auth has already succeeded and does not depend on this write
 
         var claims = new List<Claim>
         {
@@ -121,6 +113,31 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
         var ticket = new AuthenticationTicket(principal, Scheme.Name);
 
         return Task.FromResult(AuthenticateResult.Success(ticket));
+    }
+
+    // Usage metadata is written at most once per interval, so a polling robot does not turn every request into a write.
+    private void PersistLastUsedIfDue(DeviceCredential credential)
+    {
+        var now = DateTime.UtcNow;
+        var intervalMinutes = int.TryParse(_configuration["DeviceAuth:LastUsedPersistIntervalMinutes"], out var parsed) && parsed >= 0 ? parsed : 10;
+
+        if (credential.LastUsedAtUtc.HasValue && now - credential.LastUsedAtUtc.Value < TimeSpan.FromMinutes(intervalMinutes)) //the row we just read says it was written recently
+        {
+            return;
+        }
+
+        try
+        {
+            _credentials.UpdateDeviceCredentialLastUsed( //writes only the three usage columns
+                credential.Id,
+                now,
+                Context.Connection.RemoteIpAddress?.ToString(),
+                Request.Headers.UserAgent.ToString());
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to update last-used metadata for device credential {CredentialId}.", credential.Id);
+        }
     }
 
     private bool RouteHasDeviceId(out int deviceId)

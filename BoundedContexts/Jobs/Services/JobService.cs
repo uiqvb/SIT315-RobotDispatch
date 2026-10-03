@@ -48,7 +48,7 @@ public class JobService : IJobService
     public List<JobResponse> GetJobsByDeviceId(int deviceId) => _dataAccess.GetJobsByDeviceId(deviceId).Select(MapToResponse).ToList();
     public List<JobResponse> GetJobsByWorkflowId(int workflowId) => _dataAccess.GetJobsByWorkflowId(workflowId).Select(MapToResponse).ToList();
 
-    public JobResponse CreateJob(int deviceId, CreateJobRequest request, int? requestedByAppUserId = null)
+    public JobResponse CreateJob(int deviceId, CreateJobRequest request, int? requestedByAppUserId = null) //appuserid is passed through here
     {
         ValidateJob(deviceId, request.CommandCatalogueId, request.IsRollback ? "Rollback" : request.ProviderType, "Queued", request.PayloadJson, request.WorkflowId, request.StepNumber, request.IsRollback);
 
@@ -68,7 +68,7 @@ public class JobService : IJobService
             PayloadJson = string.IsNullOrWhiteSpace(request.PayloadJson) ? "{}" : request.PayloadJson,
             ProviderType = request.IsRollback ? "Rollback" : request.ProviderType,
             Status = "Queued",
-            RequestedByAppUserId = requestedByAppUserId ?? request.RequestedByAppUserId,
+            RequestedByAppUserId = requestedByAppUserId ?? request.RequestedByAppUserId, //it is created as part of the job.
             IsRollback = request.IsRollback,
             RollbackOfJobHistoryId = request.RollbackOfJobHistoryId,
             CreatedDate = now,
@@ -119,62 +119,57 @@ public class JobService : IJobService
 
     public bool DeactivateJob(int id) => CancelJob(id);
 
-    public bool MarkJobStarted(int id, int? deviceCredentialId = null)
+    public bool MarkJobStarted(int id, StartJobRequest request, int deviceCredentialId, int deviceId)
     {
-        var existing = _dataAccess.GetJobById(id);
+        var claimedAtUtc = RequireClaimedAtUtc(request.ClaimedAtUtc); //the claim id the robot got from claim-next and echoed back
+        var existing = _dataAccess.GetJobById(id); //read only to check ownership, never written back
         if (existing == null) return false;
-        ValidateDeviceCredentialCanAccessJob(existing, deviceCredentialId);
-        if (deviceCredentialId.HasValue && existing.ClaimedByDeviceCredentialId == null) existing.ClaimedByDeviceCredentialId = deviceCredentialId;
-        if (existing.Status is "Completed" or "Failed" or "Cancelled" or "RolledBack") throw new InvalidOperationException("This job cannot be started from its current status.");
-        existing.Status = "Executing";
-        existing.ModifiedDate = DateTime.UtcNow;
-        var updated = _dataAccess.UpdateJob(existing.Id, existing);
-        if (updated) MarkParentWorkflowExecuting(existing.WorkflowId, deviceCredentialId, existing.ModifiedDate);
-        return updated;
+        ValidateAuthenticatedDeviceCanAccessJob(existing, deviceCredentialId, deviceId); //job must belong to the robot's own device
+
+        var now = DateTime.UtcNow;
+        var started = _dataAccess.TryMarkClaimedJobExecuting(id, deviceCredentialId, claimedAtUtc, now); //Claimed -> Executing in one guarded UPDATE
+        if (started == null) throw new InvalidOperationException("This job cannot be started from its current status."); //row moved on or wrong claim -> 409
+
+        MarkParentWorkflowExecuting(started.WorkflowId, deviceCredentialId, now); //parent workflow follows the job into Executing
+        return true;
     }
 
-    public bool MarkJobCompleted(int id, CompleteJobRequest request, int? deviceCredentialId = null)
+    public bool MarkJobCompleted(int id, CompleteJobRequest request, int deviceCredentialId, int deviceId)
     {
-        var existing = _dataAccess.GetJobById(id);
+        var claimedAtUtc = RequireClaimedAtUtc(request.ClaimedAtUtc); //the claim id the robot got from claim-next and echoed back
+        var existing = _dataAccess.GetJobById(id); //read only to check ownership, never written back
         if (existing == null) return false;
-        ValidateDeviceCredentialCanAccessJob(existing, deviceCredentialId);
-        if (deviceCredentialId.HasValue && existing.ClaimedByDeviceCredentialId == null) existing.ClaimedByDeviceCredentialId = deviceCredentialId;
-        if (existing.Status is "Completed" or "Failed" or "Cancelled" or "RolledBack") throw new InvalidOperationException("This job cannot be completed from its current status.");
+        ValidateAuthenticatedDeviceCanAccessJob(existing, deviceCredentialId, deviceId); //job must belong to the robot's own device
 
         var resultJson = string.IsNullOrWhiteSpace(request.ResultJson) ? "{}" : request.ResultJson!;
         ValidateJsonObject(resultJson, "ResultJson");
 
-        existing.Status = "Completed";
-        existing.ModifiedDate = DateTime.UtcNow;
-        var updated = _dataAccess.UpdateJob(existing.Id, existing);
-        if (!updated) return false;
+        var completed = _dataAccess.TryFinishClaimedJob(id, deviceCredentialId, claimedAtUtc, CompletableStatuses, "Completed", DateTime.UtcNow); //Executing -> Completed in one guarded UPDATE
+        if (completed == null) throw new InvalidOperationException("This job cannot be completed from its current status."); //row moved on or wrong claim -> 409
 
-        InsertHistory(existing, true, true, resultJson, null, null);
-        ApplyCompletedJobPose(existing);
+        InsertHistory(completed, true, true, resultJson, null, null); //side effects use the row PostgreSQL returned, not the earlier read
+        ApplyCompletedJobPose(completed);
 
         // A standalone rollback job has no workflow to finalize, so this is the only moment
         // its original can be marked reversed.
-        if (existing.IsRollback && !existing.WorkflowId.HasValue)
+        if (completed.IsRollback && !completed.WorkflowId.HasValue)
         {
-            MarkOriginalsRolledBack(new[] { existing }, existing.ModifiedDate);
+            MarkOriginalsRolledBack(new[] { completed }, completed.ModifiedDate);
         }
 
-        if (existing.WorkflowId.HasValue) FinalizeParentWorkflowIfReady(existing.WorkflowId.Value, DateTime.UtcNow);
+        if (completed.WorkflowId.HasValue) FinalizeParentWorkflowIfReady(completed.WorkflowId.Value, DateTime.UtcNow);
         return true;
     }
 
-    public bool MarkJobFailed(int id, FailJobRequest request, int? deviceCredentialId = null)
+    public bool MarkJobFailed(int id, FailJobRequest request, int deviceCredentialId, int deviceId)
     {
-        var existing = _dataAccess.GetJobById(id);
+        var claimedAtUtc = RequireClaimedAtUtc(request.ClaimedAtUtc); //the claim id the robot got from claim-next and echoed back
+        var existing = _dataAccess.GetJobById(id); //read only to check ownership, never written back
         if (existing == null) return false;
-        ValidateDeviceCredentialCanAccessJob(existing, deviceCredentialId);
-        if (deviceCredentialId.HasValue && existing.ClaimedByDeviceCredentialId == null) existing.ClaimedByDeviceCredentialId = deviceCredentialId;
-        if (existing.Status is "Completed" or "Failed" or "Cancelled" or "RolledBack") throw new InvalidOperationException("This job cannot be failed from its current status.");
+        ValidateAuthenticatedDeviceCanAccessJob(existing, deviceCredentialId, deviceId); //job must belong to the robot's own device
 
-        existing.Status = "Failed";
-        existing.ModifiedDate = DateTime.UtcNow;
-        var updated = _dataAccess.UpdateJob(existing.Id, existing);
-        if (!updated) return false;
+        existing = _dataAccess.TryFinishClaimedJob(id, deviceCredentialId, claimedAtUtc, FailableStatuses, "Failed", DateTime.UtcNow); //Claimed/Executing -> Failed in one guarded UPDATE, returns the new row
+        if (existing == null) throw new InvalidOperationException("This job cannot be failed from its current status."); //row moved on or wrong claim -> 409
 
         InsertHistory(
             existing,
@@ -317,9 +312,7 @@ public class JobService : IJobService
     {
         foreach (var queuedJob in _dataAccess.GetJobsByWorkflowId(workflowId).Where(x => x.Status.Equals("Queued", StringComparison.OrdinalIgnoreCase)))
         {
-            queuedJob.Status = "Cancelled";
-            queuedJob.ModifiedDate = now;
-            _dataAccess.UpdateJob(queuedJob.Id, queuedJob);
+            _dataAccess.TryUpdateQueuedJobStatus(queuedJob.Id, "Cancelled", now); //Queued -> Cancelled, no-op if something claimed it meanwhile
         }
     }
 
@@ -558,19 +551,29 @@ public class JobService : IJobService
         return Math.Max(0, (int)Math.Round((completedAtUtc - startedAtUtc.Value).TotalMilliseconds));
     }
 
-    private void ValidateDeviceCredentialCanAccessJob(Job existing, int? deviceCredentialId)
-    {
-        if (!deviceCredentialId.HasValue)
-        {
-            return;
-        }
+    private static readonly string[] CompletableStatuses = { "Executing" };
 
-        if (!_dataAccess.DeviceCredentialOwnsDevice(deviceCredentialId.Value, existing.DeviceId))
+    // The robot can fail a job it claimed but could not start, so Failed is reachable from Claimed as well.
+    private static readonly string[] FailableStatuses = { "Claimed", "Executing" };
+
+    // The authentication handler already proved this credential belongs to deviceId, so no database round trip is needed.
+    private static void ValidateAuthenticatedDeviceCanAccessJob(Job existing, int deviceCredentialId, int deviceId)
+    {
+        if (existing.DeviceId != deviceId) //deviceId comes from the auth claims, the job's device from the database
         {
             throw new UnauthorizedAccessException("This device credential does not own this job's device.");
         }
 
         ValidateClaimedCredential(existing, deviceCredentialId);
+    }
+
+    private static DateTime RequireClaimedAtUtc(DateTime? claimedAtUtc)
+    {
+        if (!claimedAtUtc.HasValue) throw new ArgumentException("ClaimedAtUtc is required. Send the job.claimedAtUtc value returned by claim-next.");
+
+        // Stored as timestamp without time zone, so compare on the UTC wall-clock value.
+        var value = claimedAtUtc.Value.Kind == DateTimeKind.Local ? claimedAtUtc.Value.ToUniversalTime() : claimedAtUtc.Value;
+        return DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
     }
 
     private static void ValidateClaimedCredential(Job existing, int? deviceCredentialId)

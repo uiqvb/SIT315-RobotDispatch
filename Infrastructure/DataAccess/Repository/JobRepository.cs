@@ -348,6 +348,16 @@ public class JobRepository : IJobDataAccess, IRepository
         };
     }
 
+    // SIT315 guarded dispatch transitions are implemented for the ADO provider only.
+    private const string AdoOnly = "Guarded dispatch transitions are only implemented for the ADO persistence provider.";
+    public List<Job> GetStaleJobsByDeviceId(int deviceId, DateTime now) => throw new NotSupportedException(AdoOnly);
+    public Job? TryClaimJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime leaseExpiresAtUtc) => throw new NotSupportedException(AdoOnly);
+    public bool TryUpdateQueuedJobStatus(int jobId, string newStatus, DateTime modifiedDate) => throw new NotSupportedException(AdoOnly);
+    public Job? TryMarkClaimedJobExecuting(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime modifiedDate) => throw new NotSupportedException(AdoOnly);
+    public Job? TryFinishClaimedJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, string[] fromStatuses, string newStatus, DateTime modifiedDate) => throw new NotSupportedException(AdoOnly);
+    public bool TryRequeueStaleClaimedJob(int jobId, DateTime? claimedAtUtc, DateTime now) => throw new NotSupportedException(AdoOnly);
+    public bool TryExpireStaleExecutingJob(int jobId, DateTime? claimedAtUtc, DateTime now) => throw new NotSupportedException(AdoOnly);
+
     private class BoolResult { public bool Value { get; set; } }
     private class IntResult { public int? Value { get; set; } }
     private class StringResult { public string? Value { get; set; } }

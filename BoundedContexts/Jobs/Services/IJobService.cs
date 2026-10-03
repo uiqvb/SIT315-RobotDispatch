@@ -13,7 +13,7 @@ public interface IJobService
     bool DeleteJob(int id);
     bool CancelJob(int id);
     bool DeactivateJob(int id);
-    bool MarkJobStarted(int id, int? deviceCredentialId = null);
-    bool MarkJobCompleted(int id, CompleteJobRequest request, int? deviceCredentialId = null);
-    bool MarkJobFailed(int id, FailJobRequest request, int? deviceCredentialId = null);
+    bool MarkJobStarted(int id, StartJobRequest request, int deviceCredentialId, int deviceId);
+    bool MarkJobCompleted(int id, CompleteJobRequest request, int deviceCredentialId, int deviceId);
+    bool MarkJobFailed(int id, FailJobRequest request, int deviceCredentialId, int deviceId);
 }

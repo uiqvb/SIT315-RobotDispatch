@@ -44,52 +44,44 @@ public class WorkDispatchService : IWorkDispatchService
         _configuration = configuration;
     }
 
-    public WorkItemClaimResponse? ClaimNextWorkItem(int deviceId, ClaimJobRequest request, int deviceCredentialId)
+    public WorkItemClaimResponse? ClaimNextWorkItem(int deviceId, ClaimJobRequest request, int deviceCredentialId, int authenticatedDeviceId)
     {
         if (deviceId <= 0) throw new ArgumentException("DeviceId is required.");
         if (deviceCredentialId <= 0) throw new ArgumentException("DeviceCredentialId is required.");
-        if (!_jobDataAccess.DeviceCredentialOwnsDevice(deviceCredentialId, deviceId)) throw new InvalidOperationException("DeviceCredential does not own the route device.");
+        if (authenticatedDeviceId != deviceId) throw new InvalidOperationException("DeviceCredential does not own the route device."); //route device vs device from auth claims, no DB query
 
         var now = DateTime.UtcNow;
         var configuredLeaseMinutes = int.TryParse(_configuration["WorkDispatch:LeaseMinutes"], out var parsedLeaseMinutes) ? parsedLeaseMinutes : 5;
         var leaseMinutes = request.LeaseMinutes > 0 ? request.LeaseMinutes : configuredLeaseMinutes;
 
-        ExpireStaleWork(deviceId, now);
+        ExpireStaleWork(deviceId, now); //redundant shouldnt be the job here ffs. Use the inbuilt stalework expirerm job and make it run from 30s to every 10s 
 
-        // A single claim call may skip several invalid BestEffort steps before it finds
+        
         // a step that can be physically dispatched. The limit prevents an accidental
         // infinite loop if data is corrupt.
-        for (var i = 0; i < 50; i++)
+        for (var i = 0; i < 50; i++) //search for oldest job, if corrupt then search for next, if corrupt next... do this at most 50 times. 
         {
-            var job = _jobDataAccess.GetOldestQueuedJobByDeviceId(deviceId);
+            var job = _jobDataAccess.GetOldestQueuedJobByDeviceId(deviceId); //F1: fetches the job. 
             if (job == null) return null;
 
             var decision = PrepareQueuedJobForDispatch(job, now);
             if (decision == DispatchDecision.SkipAndContinue)
             {
-                continue;
+                continue; //break iteration if the current job is not ready to go(aka skipandcontinue decision), move to next iteration
             }
 
-            if (decision == DispatchDecision.StopWithoutWork)
-            {
-                return null;
-            }
+            //the job which was status=queud becomes stauts=claimed, but only if no other request got there first.
+            var claimed = _jobDataAccess.TryClaimJob(job.Id, deviceCredentialId, now, now.AddMinutes(leaseMinutes)); //PostgreSQL picks one winner, returns the stored row
+            if (claimed == null) continue; //another request won this job, go look for the next one
 
-            job.Status = "Claimed";
-            job.ClaimedByDeviceCredentialId = deviceCredentialId;
-            job.ClaimedAtUtc = now;
-            job.LeaseExpiresAtUtc = now.AddMinutes(leaseMinutes);
-            job.ModifiedDate = now;
-            _jobDataAccess.UpdateJob(job.Id, job);
+            MarkParentWorkflowClaimed(claimed.WorkflowId, deviceCredentialId, now, leaseMinutes); //parent workflow is also marked then
 
-            MarkParentWorkflowClaimed(job.WorkflowId, deviceCredentialId, now, leaseMinutes);
-
-            var (inverseCommandName, inversePayloadJson) = BuildCachedInverse(job);
+            var (inverseCommandName, inversePayloadJson) = BuildCachedInverse(claimed); //inverse is built
 
             return new WorkItemClaimResponse
             {
                 WorkItemType = "Job",
-                Job = JobService.MapToResponse(job),
+                Job = JobService.MapToResponse(claimed), //job and inverse are then sent back to the robot as response.
                 InverseCommandName = inverseCommandName,
                 InversePayloadJson = inversePayloadJson
             };
@@ -120,11 +112,11 @@ public class WorkDispatchService : IWorkDispatchService
         return staleJobs.Count;
     }
 
-    public OfflineRollbackReconcileResponse ReportOfflineRollback(int deviceId, ReportOfflineRollbackRequest request, int deviceCredentialId)
+    public OfflineRollbackReconcileResponse ReportOfflineRollback(int deviceId, ReportOfflineRollbackRequest request, int deviceCredentialId, int authenticatedDeviceId)
     {
         if (deviceId <= 0) throw new ArgumentException("DeviceId is required.");
         if (deviceCredentialId <= 0) throw new ArgumentException("DeviceCredentialId is required.");
-        if (!_jobDataAccess.DeviceCredentialOwnsDevice(deviceCredentialId, deviceId)) throw new InvalidOperationException("DeviceCredential does not own the route device.");
+        if (authenticatedDeviceId != deviceId) throw new InvalidOperationException("DeviceCredential does not own the route device."); //route device vs device from auth claims, no DB query
         if (request.Steps.Count == 0) throw new ArgumentException("At least one executed rollback step is required.");
 
         var now = DateTime.UtcNow;
@@ -425,9 +417,7 @@ public class WorkDispatchService : IWorkDispatchService
 
         if (IsTerminalStatus(workflow.Status))
         {
-            job.Status = "Cancelled";
-            job.ModifiedDate = now;
-            _jobDataAccess.UpdateJob(job.Id, job);
+            _jobDataAccess.TryUpdateQueuedJobStatus(job.Id, "Cancelled", now); //Queued -> Cancelled, no-op if something claimed it meanwhile
             return DispatchDecision.SkipAndContinue;
         }
 
@@ -546,30 +536,21 @@ public class WorkDispatchService : IWorkDispatchService
 
     private void ExpireStaleWork(int deviceId, DateTime now)
     {
-        var staleJobs = _jobDataAccess.GetJobsByDeviceId(deviceId)
-            .Where(x => (x.Status.Equals("Claimed", StringComparison.OrdinalIgnoreCase) || x.Status.Equals("Executing", StringComparison.OrdinalIgnoreCase))
-                        && x.LeaseExpiresAtUtc.HasValue
-                        && x.LeaseExpiresAtUtc.Value <= now)
-            .OrderBy(x => x.CreatedDate)
-            .ThenBy(x => x.Id)
-            .ToList();
+        var staleJobs = _jobDataAccess.GetStaleJobsByDeviceId(deviceId, now); //PostgreSQL returns only expired Claimed/Executing rows
 
         foreach (var staleJob in staleJobs)
         {
+            // Each transition re-checks the row, so a robot that started or finished the job since the SELECT wins.
             if (staleJob.Status.Equals("Claimed", StringComparison.OrdinalIgnoreCase))
             {
-                staleJob.Status = "Queued";
-                staleJob.ClaimedByDeviceCredentialId = null;
-                staleJob.ClaimedAtUtc = null;
-                staleJob.LeaseExpiresAtUtc = null;
-                staleJob.ModifiedDate = now;
-                _jobDataAccess.UpdateJob(staleJob.Id, staleJob);
+                _jobDataAccess.TryRequeueStaleClaimedJob(staleJob.Id, staleJob.ClaimedAtUtc, now); //Claimed -> Queued, only if it is still this stale claim
                 continue;
             }
 
+            if (!_jobDataAccess.TryExpireStaleExecutingJob(staleJob.Id, staleJob.ClaimedAtUtc, now)) continue; //Executing -> Expired; robot finished first, so skip side effects
+
             staleJob.Status = "Expired";
             staleJob.ModifiedDate = now;
-            _jobDataAccess.UpdateJob(staleJob.Id, staleJob);
             InsertJobHistory(staleJob, false, true, null, "LEASE_EXPIRED", "Job lease expired while executing. It was not automatically retried.", now);
             InvalidatePose(staleJob.DeviceId, "Grid pose invalidated because an executing job expired.", now);
 
@@ -616,9 +597,11 @@ public class WorkDispatchService : IWorkDispatchService
 
     private void MarkJobValidationFailed(Job job, string failureCode, string failureMessage, bool executed, DateTime now)
     {
+        // Only a still-Queued job is failed, so a request that lost the claim race cannot fail the winner's job.
+        if (!_jobDataAccess.TryUpdateQueuedJobStatus(job.Id, "Failed", now)) return;
+
         job.Status = "Failed";
         job.ModifiedDate = now;
-        _jobDataAccess.UpdateJob(job.Id, job);
         InsertJobHistory(job, false, executed, null, failureCode, failureMessage, now);
     }
 
@@ -640,9 +623,7 @@ public class WorkDispatchService : IWorkDispatchService
     {
         foreach (var job in _jobDataAccess.GetJobsByWorkflowId(workflowId).Where(x => x.Status.Equals("Queued", StringComparison.OrdinalIgnoreCase)))
         {
-            job.Status = "Cancelled";
-            job.ModifiedDate = now;
-            _jobDataAccess.UpdateJob(job.Id, job);
+            _jobDataAccess.TryUpdateQueuedJobStatus(job.Id, "Cancelled", now); //Queued -> Cancelled, no-op if something claimed it meanwhile
         }
     }
 
@@ -900,8 +881,7 @@ public class WorkDispatchService : IWorkDispatchService
     private enum DispatchDecision
     {
         Claim,
-        SkipAndContinue,
-        StopWithoutWork
+        SkipAndContinue
     }
 
     private sealed class GridPose

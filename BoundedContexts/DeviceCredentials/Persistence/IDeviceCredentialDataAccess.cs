@@ -11,4 +11,6 @@ public interface IDeviceCredentialDataAccess
     DeviceCredential InsertDeviceCredential(DeviceCredential newDeviceCredential);
     bool UpdateDeviceCredential(int id, DeviceCredential updatedDeviceCredential);
     bool DeleteDeviceCredential(int id);
+    DeviceCredential? GetDeviceCredentialByCredentialIdentifier(string credentialIdentifier);
+    bool UpdateDeviceCredentialLastUsed(int id, DateTime lastUsedAtUtc, string? lastUsedIpAddress, string? lastUsedUserAgent);
 }

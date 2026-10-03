@@ -26,8 +26,9 @@ public class WorkDispatchController : ControllerBase
     {
         try
         {
-            var deviceCredentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
-            var response = _service.ClaimNextWorkItem(deviceId, request, deviceCredentialId);
+            var deviceCredentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User); //gets the credientialID, that means the ID of the crediential that exists. Crediential=entire record around the password/secret
+            var authenticatedDeviceId = _currentUserAccessor.GetRequiredDeviceId(User); //device the credential authenticated as, from the auth claims
+            var response = _service.ClaimNextWorkItem(deviceId, request, deviceCredentialId, authenticatedDeviceId);
             if (response == null) return NoContent();
             return Ok(response);
         }
@@ -44,7 +45,8 @@ public class WorkDispatchController : ControllerBase
         try
         {
             var deviceCredentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
-            return Ok(_service.ReportOfflineRollback(deviceId, request, deviceCredentialId));
+            var authenticatedDeviceId = _currentUserAccessor.GetRequiredDeviceId(User); //device the credential authenticated as, from the auth claims
+            return Ok(_service.ReportOfflineRollback(deviceId, request, deviceCredentialId, authenticatedDeviceId));
         }
         catch (UnauthorizedAccessException ex) { return Unauthorized(ex.Message); }
         catch (ArgumentException ex) { return BadRequest(ex.Message); }

@@ -150,4 +150,9 @@ public class DeviceCredentialRepository : IDeviceCredentialDataAccess, IReposito
 
         return result.Any();
     }
+
+    // SIT315 targeted auth lookup and usage write are implemented for the ADO provider only.
+    private const string AdoOnly = "Targeted device credential access is only implemented for the ADO persistence provider.";
+    public DeviceCredential? GetDeviceCredentialByCredentialIdentifier(string credentialIdentifier) => throw new NotSupportedException(AdoOnly);
+    public bool UpdateDeviceCredentialLastUsed(int id, DateTime lastUsedAtUtc, string? lastUsedIpAddress, string? lastUsedUserAgent) => throw new NotSupportedException(AdoOnly);
 }
