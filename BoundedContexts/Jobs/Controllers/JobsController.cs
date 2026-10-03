@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using RobotControllerApi.BoundedContexts.Auth.Constants;
 using RobotControllerApi.BoundedContexts.Auth.Services;
 using RobotControllerApi.BoundedContexts.Jobs.Dtos;
 using RobotControllerApi.BoundedContexts.Jobs.Services;
+using RobotControllerApi.Infrastructure;
 
 namespace RobotControllerApi.BoundedContexts.Jobs.Controllers;
 
@@ -68,11 +70,11 @@ public class JobsController : ControllerBase
 
     [Authorize(Policy = AuthorizationPolicies.HumanUser)]
     [HttpPatch("{id}/cancel")]
-    public ActionResult CancelJob(int id)
+    public async Task<ActionResult> CancelJob(int id, CancellationToken ct)
     {
         try
         {
-            var success = _service.CancelJob(id);
+            var success = await _service.CancelJobAsync(id, ct);
             if (!success) return NotFound();
             return NoContent();
         }
@@ -82,7 +84,7 @@ public class JobsController : ControllerBase
 
     [Authorize(Policy = AuthorizationPolicies.HumanUser)]
     [HttpPatch("{id}/deactivate")]
-    public ActionResult DeactivateJob(int id) => CancelJob(id);
+    public Task<ActionResult> DeactivateJob(int id, CancellationToken ct) => CancelJob(id, ct);
 
     [Authorize(Policy = AuthorizationPolicies.HumanUser)]
     [HttpDelete("{id}")]
@@ -100,13 +102,14 @@ public class JobsController : ControllerBase
 
     [Authorize(Policy = AuthorizationPolicies.DeviceAdapter)]
     [HttpPatch("/api/adapter/jobs/{jobId}/started")]
-    public ActionResult MarkJobStarted(int jobId, StartJobRequest request)
+    [EnableRateLimiting(DispatchBackpressure.PolicyName)] //shares the dispatch permit pool
+    public async Task<ActionResult> MarkJobStarted(int jobId, StartJobRequest request, CancellationToken ct)
     {
         try
         {
             var credentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
             var deviceId = _currentUserAccessor.GetRequiredDeviceId(User); //device the credential authenticated as, from the auth claims
-            var success = _service.MarkJobStarted(jobId, request, credentialId, deviceId); //request carries the claimedAtUtc the robot echoed back
+            var success = await _service.MarkJobStartedAsync(jobId, request, credentialId, deviceId, ct); //request carries the claimedAtUtc the robot echoed back
             if (!success) return NotFound();
             return NoContent();
         }
@@ -117,13 +120,14 @@ public class JobsController : ControllerBase
 
     [Authorize(Policy = AuthorizationPolicies.DeviceAdapter)]
     [HttpPatch("/api/adapter/jobs/{jobId}/completed")]
-    public ActionResult MarkJobCompleted(int jobId, CompleteJobRequest request)
+    [EnableRateLimiting(DispatchBackpressure.PolicyName)] //shares the dispatch permit pool
+    public async Task<ActionResult> MarkJobCompleted(int jobId, CompleteJobRequest request, CancellationToken ct)
     {
         try
         {
             var credentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
             var deviceId = _currentUserAccessor.GetRequiredDeviceId(User); //device the credential authenticated as, from the auth claims
-            var success = _service.MarkJobCompleted(jobId, request, credentialId, deviceId);
+            var success = await _service.MarkJobCompletedAsync(jobId, request, credentialId, deviceId, ct);
             if (!success) return NotFound();
             return NoContent();
         }
@@ -134,13 +138,14 @@ public class JobsController : ControllerBase
 
     [Authorize(Policy = AuthorizationPolicies.DeviceAdapter)]
     [HttpPatch("/api/adapter/jobs/{jobId}/failed")]
-    public ActionResult MarkJobFailed(int jobId, FailJobRequest request)
+    [EnableRateLimiting(DispatchBackpressure.PolicyName)] //shares the dispatch permit pool
+    public async Task<ActionResult> MarkJobFailed(int jobId, FailJobRequest request, CancellationToken ct)
     {
         try
         {
             var credentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
             var deviceId = _currentUserAccessor.GetRequiredDeviceId(User); //device the credential authenticated as, from the auth claims
-            var success = _service.MarkJobFailed(jobId, request, credentialId, deviceId);
+            var success = await _service.MarkJobFailedAsync(jobId, request, credentialId, deviceId, ct);
             if (!success) return NotFound();
             return NoContent();
         }

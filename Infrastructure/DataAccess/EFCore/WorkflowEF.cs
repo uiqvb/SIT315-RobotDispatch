@@ -59,4 +59,8 @@ public class WorkflowEF : EfDataAccessBase, IWorkflowDataAccess
     public bool DeviceExistsAndActive(int deviceId) => Exists("SELECT EXISTS (SELECT 1 FROM public.device WHERE id = @Id AND isactive = true)", new[] { new NpgsqlParameter("@Id", deviceId) });
 
     public bool DeviceCredentialOwnsDevice(int deviceCredentialId, int deviceId) => Exists("SELECT EXISTS (SELECT 1 FROM public.devicecredential dc JOIN public.device d ON d.id = dc.deviceid WHERE dc.id = @CredentialId AND dc.deviceid = @DeviceId AND dc.isactive = true AND dc.revokedatutc IS NULL AND (dc.expiresatutc IS NULL OR dc.expiresatutc > (now() AT TIME ZONE 'utc')) AND d.isactive = true)", new[] { new NpgsqlParameter("@CredentialId", deviceCredentialId), new NpgsqlParameter("@DeviceId", deviceId) });
+
+    // Not the configured provider: async siblings return the sync result, no real async I/O here.
+    public Task<Workflow?> GetWorkflowByIdAsync(int id, CancellationToken ct = default) => Task.FromResult(GetWorkflowById(id));
+    public Task<bool> UpdateWorkflowAsync(int id, Workflow updatedWorkflow, CancellationToken ct = default) => Task.FromResult(UpdateWorkflow(id, updatedWorkflow));
 }

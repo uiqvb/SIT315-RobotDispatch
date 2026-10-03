@@ -81,4 +81,7 @@ public class DeviceEF : IDeviceDataAccess
         _context.SaveChanges();
         return true;
     }
+
+    // Not the configured provider: async siblings return the sync result, no real async I/O here.
+    public Task<Device?> GetDeviceByIdAsync(int id, CancellationToken ct = default) => Task.FromResult(GetDeviceById(id));
 }

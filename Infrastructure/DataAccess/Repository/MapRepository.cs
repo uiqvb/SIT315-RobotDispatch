@@ -126,4 +126,7 @@ public class MapRepository : IMapDataAccess, IRepository
 
         return result.Any();
     }
+
+    // Not the configured provider: async siblings return the sync result, no real async I/O here.
+    public Task<Map?> GetMapByIdAsync(int id, CancellationToken ct = default) => Task.FromResult(GetMapById(id));
 }

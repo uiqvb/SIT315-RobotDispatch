@@ -37,13 +37,14 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
         _configuration = configuration;
     }
 
-    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+    protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        var ct = Context.RequestAborted; //robot hangs up -> its DB calls are cancelled too
         var endpoint = Context.GetEndpoint();
 
         if (endpoint?.Metadata.GetMetadata<IAllowAnonymous>() != null)
         {
-            return Task.FromResult(AuthenticateResult.NoResult());
+            return AuthenticateResult.NoResult();
         }
 
         Response.Headers["WWW-Authenticate"] = "DeviceCredential";
@@ -62,7 +63,7 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
             return FailAuthentication();
         }
 
-        var credential = _credentials.GetDeviceCredentialByCredentialIdentifier(credentialIdentifier); //one row by identifier, not the whole table
+        var credential = await _credentials.GetDeviceCredentialByCredentialIdentifierAsync(credentialIdentifier, ct); //one row by identifier, not the whole table; thread freed while PostgreSQL works
 
         if (credential == null)
         {
@@ -84,7 +85,7 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
             return FailAuthentication();
         }
 
-        var device = _devices.GetDeviceById(credential.DeviceId);
+        var device = await _devices.GetDeviceByIdAsync(credential.DeviceId, ct);
 
         if (device == null || !device.IsActive)
         {
@@ -96,7 +97,7 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
             return FailAuthentication();
         }
 
-        PersistLastUsedIfDue(credential); //usage metadata only; auth has already succeeded and does not depend on this write
+        await PersistLastUsedIfDueAsync(credential, ct); //usage metadata only; auth has already succeeded and does not depend on this write
 
         var claims = new List<Claim>
         {
@@ -112,11 +113,11 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
         var principal = new ClaimsPrincipal(identity);
         var ticket = new AuthenticationTicket(principal, Scheme.Name);
 
-        return Task.FromResult(AuthenticateResult.Success(ticket));
+        return AuthenticateResult.Success(ticket);
     }
 
     // Usage metadata is written at most once per interval, so a polling robot does not turn every request into a write.
-    private void PersistLastUsedIfDue(DeviceCredential credential)
+    private async Task PersistLastUsedIfDueAsync(DeviceCredential credential, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
         var intervalMinutes = int.TryParse(_configuration["DeviceAuth:LastUsedPersistIntervalMinutes"], out var parsed) && parsed >= 0 ? parsed : 10;
@@ -128,11 +129,12 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
 
         try
         {
-            _credentials.UpdateDeviceCredentialLastUsed( //writes only the three usage columns
+            await _credentials.UpdateDeviceCredentialLastUsedAsync( //writes only the three usage columns
                 credential.Id,
                 now,
                 Context.Connection.RemoteIpAddress?.ToString(),
-                Request.Headers.UserAgent.ToString());
+                Request.Headers.UserAgent.ToString(),
+                ct);
         }
         catch (Exception ex)
         {
@@ -148,8 +150,8 @@ public class DeviceCredentialAuthenticationHandler : AuthenticationHandler<Authe
         return int.TryParse(routeValue, out deviceId) && deviceId > 0;
     }
 
-    private Task<AuthenticateResult> FailAuthentication()
+    private static AuthenticateResult FailAuthentication()
     {
-        return Task.FromResult(AuthenticateResult.Fail("Device credential authentication failed."));
+        return AuthenticateResult.Fail("Device credential authentication failed.");
     }
 }

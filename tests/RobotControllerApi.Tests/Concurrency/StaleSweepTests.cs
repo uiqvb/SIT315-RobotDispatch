@@ -40,15 +40,15 @@ public class StaleSweepTests : IAsyncLifetime
 
     private Task<string> StatusOf(int jobId) => _db.ScalarAsync<string>("SELECT status FROM public.job WHERE id = @id;", ("id", jobId));
 
-    private JobResponse Claim(int credentialId) =>
-        Dispatch().ClaimNextWorkItem(PostgresFixture.NanoDeviceId, new ClaimJobRequest(), credentialId, PostgresFixture.NanoDeviceId)?.Job
+    private async Task<JobResponse> Claim(int credentialId) =>
+        (await Dispatch().ClaimNextWorkItemAsync(PostgresFixture.NanoDeviceId, new ClaimJobRequest(), credentialId, PostgresFixture.NanoDeviceId))?.Job
         ?? throw new InvalidOperationException("Expected claim-next to hand out a job.");
 
     private async Task<(int CredentialId, int JobId)> StaleClaimedJobAsync()
     {
         var credentialId = await _db.InsertCredentialAsync(PostgresFixture.NanoDeviceId, "nano-a", "secret-a");
         var jobId = await _db.InsertQueuedJobAsync(PostgresFixture.NanoDeviceId);
-        Claim(credentialId);
+        await Claim(credentialId);
         await _db.ExpireLeaseAsync(jobId);
         return (credentialId, jobId);
     }
@@ -58,7 +58,7 @@ public class StaleSweepTests : IAsyncLifetime
     {
         var (credentialId, jobId) = await StaleClaimedJobAsync();
 
-        var result = Dispatch().ClaimNextWorkItem(PostgresFixture.NanoDeviceId, new ClaimJobRequest(), credentialId, PostgresFixture.NanoDeviceId);
+        var result = await Dispatch().ClaimNextWorkItemAsync(PostgresFixture.NanoDeviceId, new ClaimJobRequest(), credentialId, PostgresFixture.NanoDeviceId);
 
         result.Should().BeNull();
         (await StatusOf(jobId)).Should().Be("Claimed");
@@ -78,8 +78,8 @@ public class StaleSweepTests : IAsyncLifetime
     {
         var credentialId = await _db.InsertCredentialAsync(PostgresFixture.NanoDeviceId, "nano-a", "secret-a");
         var jobId = await _db.InsertQueuedJobAsync(PostgresFixture.NanoDeviceId);
-        var claim = Claim(credentialId);
-        JobService().MarkJobStarted(jobId, new StartJobRequest { ClaimedAtUtc = claim.ClaimedAtUtc }, credentialId, PostgresFixture.NanoDeviceId);
+        var claim = await Claim(credentialId);
+        await JobService().MarkJobStartedAsync(jobId, new StartJobRequest { ClaimedAtUtc = claim.ClaimedAtUtc }, credentialId, PostgresFixture.NanoDeviceId);
         await _db.ExpireLeaseAsync(jobId);
 
         (await Sweeper().RunSweepOnceAsync()).Should().Be(1);
@@ -94,7 +94,7 @@ public class StaleSweepTests : IAsyncLifetime
         var (_, staleJobId) = await StaleClaimedJobAsync();
         for (var i = 0; i < 10; i++) await _db.InsertQueuedJobAsync(PostgresFixture.NanoDeviceId);
 
-        var stale = Jobs().GetStaleJobs(DateTime.UtcNow);
+        var stale = await Jobs().GetStaleJobsAsync(DateTime.UtcNow);
 
         stale.Select(x => x.Id).Should().Equal(staleJobId);
     }
@@ -151,8 +151,8 @@ public class StaleSweepTests : IAsyncLifetime
         for (var i = 0; i < 20; i++)
         {
             var jobId = await _db.InsertQueuedJobAsync(PostgresFixture.NanoDeviceId);
-            var claim = Claim(credentialId);
-            JobService().MarkJobStarted(claim.Id, new StartJobRequest { ClaimedAtUtc = claim.ClaimedAtUtc }, credentialId, PostgresFixture.NanoDeviceId);
+            var claim = await Claim(credentialId);
+            await JobService().MarkJobStartedAsync(claim.Id, new StartJobRequest { ClaimedAtUtc = claim.ClaimedAtUtc }, credentialId, PostgresFixture.NanoDeviceId);
             jobIds.Add(jobId);
         }
         foreach (var jobId in jobIds) await _db.ExpireLeaseAsync(jobId);

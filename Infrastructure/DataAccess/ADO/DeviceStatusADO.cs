@@ -52,16 +52,18 @@ public class DeviceStatusADO : IDeviceStatusDataAccess
         return dr.Read() ? MapDeviceStatus(dr) : null;
     }
 
+    private const string GetDeviceStatusByDeviceIdSql =
+        @"SELECT id, deviceid, connectionstate, operationalstate, lastseenatutc, lastheartbeatatutc, posemapid, gridx, gridy, facing, isgridaligned, isgridposetrusted, poseconfidence, estimatedxcm, estimatedycm, estimatedheadingdegrees, isinsidemap, statusmessage, lasterrorcode, lasterrormessage, createddate, modifieddate
+              FROM public.devicestatus
+              WHERE deviceid = @deviceId
+              ORDER BY id;";
+
     public DeviceStatus? GetDeviceStatusByDeviceId(int deviceId)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT id, deviceid, connectionstate, operationalstate, lastseenatutc, lastheartbeatatutc, posemapid, gridx, gridy, facing, isgridaligned, isgridposetrusted, poseconfidence, estimatedxcm, estimatedycm, estimatedheadingdegrees, isinsidemap, statusmessage, lasterrorcode, lasterrormessage, createddate, modifieddate
-              FROM public.devicestatus
-              WHERE deviceid = @deviceId
-              ORDER BY id;", conn);
+        using var cmd = new NpgsqlCommand(GetDeviceStatusByDeviceIdSql, conn);
 
         cmd.Parameters.AddWithValue("deviceId", deviceId);
 
@@ -69,6 +71,9 @@ public class DeviceStatusADO : IDeviceStatusDataAccess
 
         return dr.Read() ? MapDeviceStatus(dr) : null;
     }
+
+    public Task<DeviceStatus?> GetDeviceStatusByDeviceIdAsync(int deviceId, CancellationToken ct = default) =>
+        AdoAsync.QuerySingleAsync(_dbConfig, GetDeviceStatusByDeviceIdSql, cmd => cmd.Parameters.AddWithValue("deviceId", deviceId), MapDeviceStatus, ct);
 
     public bool DeviceStatusExistsByDeviceId(int deviceId, int? excludeId = null)
     {
@@ -121,13 +126,8 @@ public class DeviceStatusADO : IDeviceStatusDataAccess
         throw new InvalidOperationException("DeviceStatus insert failed.");
     }
 
-    public bool UpdateDeviceStatus(int id, DeviceStatus updatedDeviceStatus)
-    {
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
-        using var cmd = new NpgsqlCommand(
-            @"UPDATE public.devicestatus
+    private const string UpdateDeviceStatusSql =
+        @"UPDATE public.devicestatus
               SET deviceid = @deviceId,
                   connectionstate = @connectionState,
                   operationalstate = @operationalState,
@@ -148,13 +148,27 @@ public class DeviceStatusADO : IDeviceStatusDataAccess
                   lasterrorcode = @lastErrorCode,
                   lasterrormessage = @lastErrorMessage,
                   modifieddate = @modifiedDate
-              WHERE id = @id;", conn);
+              WHERE id = @id;";
+
+    public bool UpdateDeviceStatus(int id, DeviceStatus updatedDeviceStatus)
+    {
+        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
+        conn.Open();
+
+        using var cmd = new NpgsqlCommand(UpdateDeviceStatusSql, conn);
 
         cmd.Parameters.AddWithValue("id", id);
         AddParameters(cmd, updatedDeviceStatus);
 
         return cmd.ExecuteNonQuery() > 0;
     }
+
+    public async Task<bool> UpdateDeviceStatusAsync(int id, DeviceStatus updatedDeviceStatus, CancellationToken ct = default) =>
+        await AdoAsync.ExecuteAsync(_dbConfig, UpdateDeviceStatusSql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("id", id);
+            AddParameters(cmd, updatedDeviceStatus);
+        }, ct) > 0;
 
     private static void AddParameters(NpgsqlCommand cmd, DeviceStatus model)
     {

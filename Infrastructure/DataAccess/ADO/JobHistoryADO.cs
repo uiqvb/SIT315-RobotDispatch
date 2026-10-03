@@ -36,14 +36,17 @@ public class JobHistoryADO : IJobHistoryDataAccess
         return results;
     }
 
+    private const string GetJobHistoryByIdSql =
+        $@"SELECT {SelectColumns}
+              FROM public.jobhistory
+              WHERE id = @id;";
+
     public JobHistory? GetJobHistoryById(int id)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand($@"SELECT {SelectColumns}
-              FROM public.jobhistory
-              WHERE id = @id;", conn);
+        using var cmd = new NpgsqlCommand(GetJobHistoryByIdSql, conn);
 
         cmd.Parameters.AddWithValue("id", id);
 
@@ -51,6 +54,9 @@ public class JobHistoryADO : IJobHistoryDataAccess
 
         return dr.Read() ? MapJobHistory(dr) : null;
     }
+
+    public Task<JobHistory?> GetJobHistoryByIdAsync(int id, CancellationToken ct = default) =>
+        AdoAsync.QuerySingleAsync(_dbConfig, GetJobHistoryByIdSql, cmd => cmd.Parameters.AddWithValue("id", id), MapJobHistory, ct);
 
     public List<JobHistory> GetJobHistoriesByJobId(int jobId)
     {
@@ -124,16 +130,18 @@ public class JobHistoryADO : IJobHistoryDataAccess
         return results;
     }
 
+    private const string InsertJobHistorySql =
+        $@"INSERT INTO public.jobhistory
+              (jobid, workflowid, stepnumber, deviceid, commandcatalogueid, commandname, payloadjson, providertype, executionkind, rollbackkind, executed, success, resultjson, failurecode, failuremessage, startedatutc, completedatutc, durationms, rollbackofjobhistoryid, createddate)
+              VALUES (@jobId, @workflowId, @stepNumber, @deviceId, @commandCatalogueId, @commandName, @payloadJson::jsonb, @providerType, @executionKind, @rollbackKind, @executed, @success, @resultJson::jsonb, @failureCode, @failureMessage, @startedAtUtc, @completedAtUtc, @durationMs, @rollbackOfJobHistoryId, @createdDate)
+              RETURNING {SelectColumns};";
+
     public JobHistory InsertJobHistory(JobHistory newJobHistory)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            $@"INSERT INTO public.jobhistory
-              (jobid, workflowid, stepnumber, deviceid, commandcatalogueid, commandname, payloadjson, providertype, executionkind, rollbackkind, executed, success, resultjson, failurecode, failuremessage, startedatutc, completedatutc, durationms, rollbackofjobhistoryid, createddate)
-              VALUES (@jobId, @workflowId, @stepNumber, @deviceId, @commandCatalogueId, @commandName, @payloadJson::jsonb, @providerType, @executionKind, @rollbackKind, @executed, @success, @resultJson::jsonb, @failureCode, @failureMessage, @startedAtUtc, @completedAtUtc, @durationMs, @rollbackOfJobHistoryId, @createdDate)
-              RETURNING {SelectColumns};", conn);
+        using var cmd = new NpgsqlCommand(InsertJobHistorySql, conn);
 
         AddParameters(cmd, newJobHistory);
 
@@ -146,6 +154,10 @@ public class JobHistoryADO : IJobHistoryDataAccess
 
         throw new InvalidOperationException("InsertJobHistory failed to return the inserted row.");
     }
+
+    public async Task<JobHistory> InsertJobHistoryAsync(JobHistory newJobHistory, CancellationToken ct = default) =>
+        await AdoAsync.QuerySingleAsync(_dbConfig, InsertJobHistorySql, cmd => AddParameters(cmd, newJobHistory), MapJobHistory, ct)
+        ?? throw new InvalidOperationException("InsertJobHistory failed to return the inserted row.");
 
     public bool DeviceExists(int deviceId)
     {

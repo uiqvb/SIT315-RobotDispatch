@@ -202,45 +202,30 @@ public class DeviceCredentialADO : IDeviceCredentialDataAccess
         return cmd.ExecuteNonQuery() > 0;
     }
 
-    public DeviceCredential? GetDeviceCredentialByCredentialIdentifier(string credentialIdentifier)
-    {
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
+    public Task<DeviceCredential?> GetDeviceCredentialByCredentialIdentifierAsync(string credentialIdentifier, CancellationToken ct = default) =>
         // Matches ux_devicecredential_identifier_lower, so this is one index lookup rather than a table load.
-        using var cmd = new NpgsqlCommand(
+        AdoAsync.QuerySingleAsync(_dbConfig,
             @"SELECT id, deviceid, name, credentialidentifier, secretkeyprefix, secrethash, hashalgorithm, expiresatutc, lastusedatutc, lastusedipaddress, lastuseduseragent, revokedatutc, revocationreason, isactive, createddate, modifieddate
               FROM public.devicecredential
-              WHERE lower(credentialidentifier) = lower(@credentialIdentifier);", conn);
+              WHERE lower(credentialidentifier) = lower(@credentialIdentifier);",
+            cmd => cmd.Parameters.AddWithValue("credentialIdentifier", credentialIdentifier), MapDeviceCredential, ct);
 
-        cmd.Parameters.AddWithValue("credentialIdentifier", credentialIdentifier);
-
-        using var dr = cmd.ExecuteReader();
-
-        return dr.Read() ? MapDeviceCredential(dr) : null;
-    }
-
-    public bool UpdateDeviceCredentialLastUsed(int id, DateTime lastUsedAtUtc, string? lastUsedIpAddress, string? lastUsedUserAgent)
-    {
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
+    public async Task<bool> UpdateDeviceCredentialLastUsedAsync(int id, DateTime lastUsedAtUtc, string? lastUsedIpAddress, string? lastUsedUserAgent, CancellationToken ct = default) =>
         // Touches only the usage columns, so it cannot write back a stale isactive or revokedatutc.
-        using var cmd = new NpgsqlCommand(
+        await AdoAsync.ExecuteAsync(_dbConfig,
             @"UPDATE public.devicecredential
               SET lastusedatutc = @lastUsedAtUtc,
                   lastusedipaddress = @lastUsedIpAddress,
                   lastuseduseragent = @lastUsedUserAgent,
                   modifieddate = @lastUsedAtUtc
-              WHERE id = @id;", conn);
-
-        cmd.Parameters.AddWithValue("id", id);
-        cmd.Parameters.AddWithValue("lastUsedAtUtc", lastUsedAtUtc);
-        cmd.Parameters.AddWithValue("lastUsedIpAddress", lastUsedIpAddress ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("lastUsedUserAgent", lastUsedUserAgent ?? (object)DBNull.Value);
-
-        return cmd.ExecuteNonQuery() > 0;
-    }
+              WHERE id = @id;",
+            cmd =>
+            {
+                cmd.Parameters.AddWithValue("id", id);
+                cmd.Parameters.AddWithValue("lastUsedAtUtc", lastUsedAtUtc);
+                cmd.Parameters.AddWithValue("lastUsedIpAddress", lastUsedIpAddress ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("lastUsedUserAgent", lastUsedUserAgent ?? (object)DBNull.Value);
+            }, ct) > 0;
 
     private static DeviceCredential MapDeviceCredential(NpgsqlDataReader dr)
     {

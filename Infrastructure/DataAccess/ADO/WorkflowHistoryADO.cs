@@ -57,6 +57,12 @@ public class WorkflowHistoryADO : IWorkflowHistoryDataAccess
         return null;
     }
 
+    private const string GetWorkflowHistoriesByWorkflowIdSql =
+        @"SELECT id, workflowid, deviceid, providertype, status, executed, success, startedatutc, completedatutc, failedstepnumber, failuremessage, rollbackofworkflowhistoryid, createddate
+              FROM workflowhistory
+              WHERE workflowid = @WorkflowId
+              ORDER BY createddate DESC, id DESC;";
+
     public List<WorkflowHistory> GetWorkflowHistoriesByWorkflowId(int workflowId)
     {
         var results = new List<WorkflowHistory>();
@@ -64,11 +70,7 @@ public class WorkflowHistoryADO : IWorkflowHistoryDataAccess
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT id, workflowid, deviceid, providertype, status, executed, success, startedatutc, completedatutc, failedstepnumber, failuremessage, rollbackofworkflowhistoryid, createddate
-              FROM workflowhistory
-              WHERE workflowid = @WorkflowId
-              ORDER BY createddate DESC, id DESC;", conn);
+        using var cmd = new NpgsqlCommand(GetWorkflowHistoriesByWorkflowIdSql, conn);
 
         cmd.Parameters.AddWithValue("@WorkflowId", workflowId);
 
@@ -81,6 +83,9 @@ public class WorkflowHistoryADO : IWorkflowHistoryDataAccess
 
         return results;
     }
+
+    public Task<List<WorkflowHistory>> GetWorkflowHistoriesByWorkflowIdAsync(int workflowId, CancellationToken ct = default) =>
+        AdoAsync.QueryListAsync(_dbConfig, GetWorkflowHistoriesByWorkflowIdSql, cmd => cmd.Parameters.AddWithValue("@WorkflowId", workflowId), MapWorkflowHistory, ct);
 
     public List<WorkflowHistory> GetWorkflowHistoriesByDeviceId(int deviceId)
     {
@@ -107,17 +112,37 @@ public class WorkflowHistoryADO : IWorkflowHistoryDataAccess
         return results;
     }
 
+    private const string InsertWorkflowHistorySql =
+        @"INSERT INTO workflowhistory
+              (workflowid, deviceid, providertype, status, executed, success, startedatutc, completedatutc, failedstepnumber, failuremessage, rollbackofworkflowhistoryid, createddate)
+              VALUES (@WorkflowId, @DeviceId, @ProviderType, @Status, @Executed, @Success, @StartedAtUtc, @CompletedAtUtc, @FailedStepNumber, @FailureMessage, @RollbackOfWorkflowHistoryId, @CreatedDate)
+              RETURNING id, workflowid, deviceid, providertype, status, executed, success, startedatutc, completedatutc, failedstepnumber, failuremessage, rollbackofworkflowhistoryid, createddate;";
+
     public WorkflowHistory InsertWorkflowHistory(WorkflowHistory newWorkflowHistory)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"INSERT INTO workflowhistory
-              (workflowid, deviceid, providertype, status, executed, success, startedatutc, completedatutc, failedstepnumber, failuremessage, rollbackofworkflowhistoryid, createddate)
-              VALUES (@WorkflowId, @DeviceId, @ProviderType, @Status, @Executed, @Success, @StartedAtUtc, @CompletedAtUtc, @FailedStepNumber, @FailureMessage, @RollbackOfWorkflowHistoryId, @CreatedDate)
-              RETURNING id, workflowid, deviceid, providertype, status, executed, success, startedatutc, completedatutc, failedstepnumber, failuremessage, rollbackofworkflowhistoryid, createddate;", conn);
+        using var cmd = new NpgsqlCommand(InsertWorkflowHistorySql, conn);
 
+        AddInsertParameters(cmd, newWorkflowHistory);
+
+        using var dr = cmd.ExecuteReader();
+
+        if (dr.Read())
+        {
+            return MapWorkflowHistory(dr);
+        }
+
+        throw new InvalidOperationException("WorkflowHistory insert failed.");
+    }
+
+    public async Task<WorkflowHistory> InsertWorkflowHistoryAsync(WorkflowHistory newWorkflowHistory, CancellationToken ct = default) =>
+        await AdoAsync.QuerySingleAsync(_dbConfig, InsertWorkflowHistorySql, cmd => AddInsertParameters(cmd, newWorkflowHistory), MapWorkflowHistory, ct)
+        ?? throw new InvalidOperationException("WorkflowHistory insert failed.");
+
+    private static void AddInsertParameters(NpgsqlCommand cmd, WorkflowHistory newWorkflowHistory)
+    {
         cmd.Parameters.AddWithValue("@WorkflowId", (object?)newWorkflowHistory.WorkflowId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@DeviceId", newWorkflowHistory.DeviceId);
         cmd.Parameters.AddWithValue("@ProviderType", newWorkflowHistory.ProviderType);
@@ -130,15 +155,6 @@ public class WorkflowHistoryADO : IWorkflowHistoryDataAccess
         cmd.Parameters.AddWithValue("@FailureMessage", (object?)newWorkflowHistory.FailureMessage ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@RollbackOfWorkflowHistoryId", (object?)newWorkflowHistory.RollbackOfWorkflowHistoryId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@CreatedDate", newWorkflowHistory.CreatedDate);
-
-        using var dr = cmd.ExecuteReader();
-
-        if (dr.Read())
-        {
-            return MapWorkflowHistory(dr);
-        }
-
-        throw new InvalidOperationException("WorkflowHistory insert failed.");
     }
 
     public bool DeviceExists(int deviceId)

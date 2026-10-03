@@ -74,6 +74,7 @@ AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+builder.Services.AddDispatchBackpressure(builder.Configuration); //concurrency cap + small queue + 429 for dispatch endpoints
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -166,6 +167,8 @@ app.UseStaticFiles();
 // After static files so the dashboard's own assets stay out of the console, and
 // before authentication so rejected (401/403) calls are still reported.
 app.UseSpectreRequestLogging();
+// Before authentication, so a saturated server rejects with 429 without first doing the credential DB lookup.
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

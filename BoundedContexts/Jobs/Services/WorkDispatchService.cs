@@ -44,7 +44,7 @@ public class WorkDispatchService : IWorkDispatchService
         _configuration = configuration;
     }
 
-    public WorkItemClaimResponse? ClaimNextWorkItem(int deviceId, ClaimJobRequest request, int deviceCredentialId, int authenticatedDeviceId)
+    public async Task<WorkItemClaimResponse?> ClaimNextWorkItemAsync(int deviceId, ClaimJobRequest request, int deviceCredentialId, int authenticatedDeviceId, CancellationToken ct = default)
     {
         if (deviceId <= 0) throw new ArgumentException("DeviceId is required.");
         if (deviceCredentialId <= 0) throw new ArgumentException("DeviceCredentialId is required.");
@@ -60,22 +60,22 @@ public class WorkDispatchService : IWorkDispatchService
         // infinite loop if data is corrupt.
         for (var i = 0; i < 50; i++) //search for oldest job, if corrupt then search for next, if corrupt next... do this at most 50 times. 
         {
-            var job = _jobDataAccess.GetOldestQueuedJobByDeviceId(deviceId); //F1: fetches the job. 
+            var job = await _jobDataAccess.GetOldestQueuedJobByDeviceIdAsync(deviceId, ct); //F1: fetches the job. 
             if (job == null) return null;
 
-            var decision = PrepareQueuedJobForDispatch(job, now);
+            var decision = await PrepareQueuedJobForDispatchAsync(job, now, ct);
             if (decision == DispatchDecision.SkipAndContinue)
             {
                 continue; //break iteration if the current job is not ready to go(aka skipandcontinue decision), move to next iteration
             }
 
             //the job which was status=queud becomes stauts=claimed, but only if no other request got there first.
-            var claimed = _jobDataAccess.TryClaimJob(job.Id, deviceCredentialId, now, now.AddMinutes(leaseMinutes)); //PostgreSQL picks one winner, returns the stored row
+            var claimed = await _jobDataAccess.TryClaimJobAsync(job.Id, deviceCredentialId, now, now.AddMinutes(leaseMinutes), ct); //PostgreSQL picks one winner, returns the stored row
             if (claimed == null) continue; //another request won this job, go look for the next one
 
-            MarkParentWorkflowClaimed(claimed.WorkflowId, deviceCredentialId, now, leaseMinutes); //parent workflow is also marked then
+            await MarkParentWorkflowClaimedAsync(claimed.WorkflowId, deviceCredentialId, now, leaseMinutes, ct); //parent workflow is also marked then
 
-            var (inverseCommandName, inversePayloadJson) = BuildCachedInverse(claimed); //inverse is built
+            var (inverseCommandName, inversePayloadJson) = await BuildCachedInverseAsync(claimed, ct); //inverse is built
 
             return new WorkItemClaimResponse
             {
@@ -93,22 +93,22 @@ public class WorkDispatchService : IWorkDispatchService
     // drained its own queue: its lease never expired, and the per-device cap then rejected
     // every new job. A robot that dies mid-demo would brick the queue until restarted by hand.
     // Running the same sweep on a timer removes the dependency on the dead robot polling.
-    public int ExpireStaleWorkForAllDevices()
+    public async Task<int> ExpireStaleWorkForAllDevicesAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
 
-        var staleJobs = _jobDataAccess.GetStaleJobs(now); //PostgreSQL returns only expired rows across every device
+        var staleJobs = await _jobDataAccess.GetStaleJobsAsync(now, ct); //PostgreSQL returns only expired rows across every device
 
         var settled = 0;
         foreach (var staleJob in staleJobs)
         {
-            if (SettleStaleJob(staleJob, now)) settled++; //each job settled straight from this list, no second query per device
+            if (await SettleStaleJobAsync(staleJob, now, ct)) settled++; //each job settled straight from this list, no second query per device
         }
 
         return settled;
     }
 
-    public OfflineRollbackReconcileResponse ReportOfflineRollback(int deviceId, ReportOfflineRollbackRequest request, int deviceCredentialId, int authenticatedDeviceId)
+    public async Task<OfflineRollbackReconcileResponse> ReportOfflineRollbackAsync(int deviceId, ReportOfflineRollbackRequest request, int deviceCredentialId, int authenticatedDeviceId, CancellationToken ct = default)
     {
         if (deviceId <= 0) throw new ArgumentException("DeviceId is required.");
         if (deviceCredentialId <= 0) throw new ArgumentException("DeviceCredentialId is required.");
@@ -119,25 +119,25 @@ public class WorkDispatchService : IWorkDispatchService
 
         // Settle whatever the disconnect stranded first, so work the robot abandoned when it
         // went dark does not keep blocking the queue behind this reconciliation.
-        ExpireStaleWork(deviceId, now);
+        await ExpireStaleWorkAsync(deviceId, now, ct);
 
-        var status = _deviceStatusDataAccess.GetDeviceStatusByDeviceId(deviceId);
+        var status = await _deviceStatusDataAccess.GetDeviceStatusByDeviceIdAsync(deviceId, ct);
         if (status == null) throw new InvalidOperationException("Device has no status row to reconcile against.");
 
         // Deliberately NOT requiring trusted pose. Losing the connection is precisely what
         // dropped trust (ExpireStaleWork -> InvalidatePose), so demanding it here would make
         // reconciliation impossible in the exact case it exists for. Invalidation clears the
         // flags but leaves the coordinates, and those coordinates are the anchor we replay from.
-        var mapId = status.PoseMapId ?? _jobDataAccess.GetDeviceMapId(deviceId);
+        var mapId = status.PoseMapId ?? await _jobDataAccess.GetDeviceMapIdAsync(deviceId, ct);
         if (!mapId.HasValue || !status.GridX.HasValue || !status.GridY.HasValue || string.IsNullOrWhiteSpace(status.Facing))
         {
-            return RejectReconciliation(status, request.Steps.Count, "No last known grid pose to reconcile from. PLACE the robot before reporting an offline rollback.", now);
+            return await RejectReconciliationAsync(status, request.Steps.Count, "No last known grid pose to reconcile from. PLACE the robot before reporting an offline rollback.", now, ct);
         }
 
-        var map = _mapDataAccess.GetMapById(mapId.Value);
+        var map = await _mapDataAccess.GetMapByIdAsync(mapId.Value, ct);
         if (map == null || !map.IsActive)
         {
-            return RejectReconciliation(status, request.Steps.Count, "Reconciliation requires an active map.", now);
+            return await RejectReconciliationAsync(status, request.Steps.Count, "Reconciliation requires an active map.", now, ct);
         }
 
         // Simulate the whole report before committing any of it. A half-applied rollback would
@@ -150,12 +150,12 @@ public class WorkDispatchService : IWorkDispatchService
             var commandName = step.CommandName?.Trim() ?? string.Empty;
             if (commandName.Length == 0)
             {
-                return RejectReconciliation(status, request.Steps.Count, "A reported rollback step had no command name.", now);
+                return await RejectReconciliationAsync(status, request.Steps.Count, "A reported rollback step had no command name.", now, ct);
             }
 
             if (!TryApplyReportedStep(commandName, pose, map, out var failure))
             {
-                return RejectReconciliation(status, request.Steps.Count, $"Reported rollback step {commandName} could not be reconciled: {failure}", now);
+                return await RejectReconciliationAsync(status, request.Steps.Count, $"Reported rollback step {commandName} could not be reconciled: {failure}", now, ct);
             }
         }
 
@@ -174,19 +174,19 @@ public class WorkDispatchService : IWorkDispatchService
             : $"Grid pose resynced after offline rollback: {request.Reason.Trim()}";
         status.LastSeenAtUtc = now;
         status.ModifiedDate = now;
-        _deviceStatusDataAccess.UpdateDeviceStatus(status.Id, status);
+        await _deviceStatusDataAccess.UpdateDeviceStatusAsync(status.Id, status, ct);
 
         var touchedWorkflowIds = new HashSet<int>();
 
         foreach (var step in request.Steps)
         {
-            RecordOfflineRollbackStep(deviceId, step, now);
-            MarkOriginalJobRolledBack(step.RollbackOfJobId, deviceId, touchedWorkflowIds, now);
+            await RecordOfflineRollbackStepAsync(deviceId, step, now, ct);
+            await MarkOriginalJobRolledBackAsync(step.RollbackOfJobId, deviceId, touchedWorkflowIds, now, ct);
         }
 
         foreach (var workflowId in touchedWorkflowIds)
         {
-            MarkWorkflowRolledBackIfAnyStepReversed(workflowId, now);
+            await MarkWorkflowRolledBackIfAnyStepReversedAsync(workflowId, now, ct);
         }
 
         return new OfflineRollbackReconcileResponse
@@ -245,9 +245,9 @@ public class WorkDispatchService : IWorkDispatchService
         return true;
     }
 
-    private OfflineRollbackReconcileResponse RejectReconciliation(DeviceStatus status, int stepCount, string message, DateTime now)
+    private async Task<OfflineRollbackReconcileResponse> RejectReconciliationAsync(DeviceStatus status, int stepCount, string message, DateTime now, CancellationToken ct)
     {
-        InvalidatePose(status.DeviceId, message, now);
+        await InvalidatePoseAsync(status.DeviceId, message, now, ct);
 
         return new OfflineRollbackReconcileResponse
         {
@@ -263,13 +263,13 @@ public class WorkDispatchService : IWorkDispatchService
 
     // Offline steps have no Job row of their own — they were never dispatched — so the history
     // row is written directly. Without it the robot's offline movements leave no audit trail.
-    private void RecordOfflineRollbackStep(int deviceId, OfflineRollbackStepReport step, DateTime now)
+    private async Task RecordOfflineRollbackStepAsync(int deviceId, OfflineRollbackStepReport step, DateTime now, CancellationToken ct)
     {
         var commandName = step.CommandName.Trim();
-        var commandCatalogueId = _jobDataAccess.GetCommandCatalogueIdByName(commandName);
-        var command = commandCatalogueId.HasValue ? _jobDataAccess.GetCommandCatalogueById(commandCatalogueId.Value) : null;
+        var commandCatalogueId = await _jobDataAccess.GetCommandCatalogueIdByNameAsync(commandName, ct);
+        var command = commandCatalogueId.HasValue ? await _jobDataAccess.GetCommandCatalogueByIdAsync(commandCatalogueId.Value, ct) : null;
 
-        _jobHistoryDataAccess.InsertJobHistory(new JobHistory
+        await _jobHistoryDataAccess.InsertJobHistoryAsync(new JobHistory
         {
             JobId = null,
             DeviceId = deviceId,
@@ -285,22 +285,22 @@ public class WorkDispatchService : IWorkDispatchService
             StartedAtUtc = step.ExecutedAtUtc,
             CompletedAtUtc = step.ExecutedAtUtc ?? now,
             CreatedDate = now
-        });
+        }, ct);
     }
 
     // The work the robot undid should not stay Completed, or the dashboard shows the robot
     // having done something it has since reversed.
-    private void MarkOriginalJobRolledBack(int? jobId, int deviceId, HashSet<int> touchedWorkflowIds, DateTime now)
+    private async Task MarkOriginalJobRolledBackAsync(int? jobId, int deviceId, HashSet<int> touchedWorkflowIds, DateTime now, CancellationToken ct)
     {
         if (!jobId.HasValue) return;
 
-        var job = _jobDataAccess.GetJobById(jobId.Value);
+        var job = await _jobDataAccess.GetJobByIdAsync(jobId.Value, ct);
         if (job == null || job.DeviceId != deviceId) return;
         if (job.Status.Equals("RolledBack", StringComparison.OrdinalIgnoreCase)) return;
 
         job.Status = "RolledBack";
         job.ModifiedDate = now;
-        _jobDataAccess.UpdateJob(job.Id, job);
+        await _jobDataAccess.UpdateJobAsync(job.Id, job, ct);
 
         if (job.WorkflowId.HasValue) touchedWorkflowIds.Add(job.WorkflowId.Value);
     }
@@ -312,18 +312,18 @@ public class WorkDispatchService : IWorkDispatchService
     // all steps would leave the common case reading Completed over a pile of RolledBack rows,
     // which is the confusing display this fixes. The schema has no PartiallyRolledBack status,
     // and adding one would be a migration.
-    private void MarkWorkflowRolledBackIfAnyStepReversed(int workflowId, DateTime now)
+    private async Task MarkWorkflowRolledBackIfAnyStepReversedAsync(int workflowId, DateTime now, CancellationToken ct)
     {
-        var workflow = _workflowDataAccess.GetWorkflowById(workflowId);
+        var workflow = await _workflowDataAccess.GetWorkflowByIdAsync(workflowId, ct);
         if (workflow == null || workflow.IsRollback) return;
         if (workflow.Status.Equals("RolledBack", StringComparison.OrdinalIgnoreCase)) return;
 
-        var jobs = _jobDataAccess.GetJobsByWorkflowId(workflowId);
+        var jobs = await _jobDataAccess.GetJobsByWorkflowIdAsync(workflowId, ct);
         if (!jobs.Any(x => x.Status.Equals("RolledBack", StringComparison.OrdinalIgnoreCase))) return;
 
         workflow.Status = "RolledBack";
         workflow.ModifiedDate = now;
-        _workflowDataAccess.UpdateWorkflow(workflow.Id, workflow);
+        await _workflowDataAccess.UpdateWorkflowAsync(workflow.Id, workflow, ct);
 
         // Cancel the steps that never ran. A rolled-back workflow is not going to be resumed —
         // the robot has physically walked back out of the position those steps were planned
@@ -341,7 +341,7 @@ public class WorkDispatchService : IWorkDispatchService
 
             job.Status = "Cancelled";
             job.ModifiedDate = now;
-            _jobDataAccess.UpdateJob(job.Id, job);
+            await _jobDataAccess.UpdateJobAsync(job.Id, job, ct);
         }
     }
 
@@ -353,11 +353,11 @@ public class WorkDispatchService : IWorkDispatchService
     // one situation where the inverse is used is the one where it can least be checked.
     // A missing inverse is a normal answer here, never an error: dispatch must not fail
     // because a command happens to be irreversible.
-    private (string? CommandName, string? PayloadJson) BuildCachedInverse(Job job)
+    private async Task<(string? CommandName, string? PayloadJson)> BuildCachedInverseAsync(Job job, CancellationToken ct)
     {
         try
         {
-            var original = _jobDataAccess.GetCommandCatalogueById(job.CommandCatalogueId);
+            var original = await _jobDataAccess.GetCommandCatalogueByIdAsync(job.CommandCatalogueId, ct);
             if (original == null) return (null, null);
 
             var originalCommand = ToCompensationCommand(original);
@@ -366,14 +366,14 @@ public class WorkDispatchService : IWorkDispatchService
             if (string.IsNullOrWhiteSpace(originalCommand.InverseCommandName)) return (null, null);
 
             var inverseName = originalCommand.InverseCommandName.Trim();
-            var inverseId = _jobDataAccess.GetCommandCatalogueIdByName(inverseName);
+            var inverseId = await _jobDataAccess.GetCommandCatalogueIdByNameAsync(inverseName, ct);
             if (!inverseId.HasValue) return (null, null);
 
-            var inverse = _jobDataAccess.GetCommandCatalogueById(inverseId.Value);
+            var inverse = await _jobDataAccess.GetCommandCatalogueByIdAsync(inverseId.Value, ct);
             if (inverse == null || !inverse.IsActive) return (null, null);
 
             // The robot can only replay what it is physically capable of executing.
-            if (_jobDataAccess.GetActiveDeviceCapability(job.DeviceId, inverse.Id) == null) return (null, null);
+            if (await _jobDataAccess.GetActiveDeviceCapabilityAsync(job.DeviceId, inverse.Id, ct) == null) return (null, null);
 
             var inverseCommand = ToCompensationCommand(inverse);
             var payload = CompensationBuilder.TransformPayload(originalCommand, inverseCommand, job.PayloadJson, null, rollbackKind);
@@ -393,64 +393,64 @@ public class WorkDispatchService : IWorkDispatchService
         snapshot.InverseCommandName,
         snapshot.RequiresDuration);
 
-    private DispatchDecision PrepareQueuedJobForDispatch(Job job, DateTime now)
+    private async Task<DispatchDecision> PrepareQueuedJobForDispatchAsync(Job job, DateTime now, CancellationToken ct)
     {
         if (!job.WorkflowId.HasValue)
         {
-            var standaloneValidation = ValidateJobAgainstCurrentPose(job);
+            var standaloneValidation = await ValidateJobAgainstCurrentPoseAsync(job, ct);
             if (standaloneValidation.IsValid) return DispatchDecision.Claim;
 
-            MarkJobValidationFailed(job, standaloneValidation.FailureCode, standaloneValidation.FailureMessage, false, now);
+            await MarkJobValidationFailedAsync(job, standaloneValidation.FailureCode, standaloneValidation.FailureMessage, false, now, ct);
             return DispatchDecision.SkipAndContinue;
         }
 
-        var workflow = _workflowDataAccess.GetWorkflowById(job.WorkflowId.Value);
+        var workflow = await _workflowDataAccess.GetWorkflowByIdAsync(job.WorkflowId.Value, ct);
         if (workflow == null)
         {
-            MarkJobValidationFailed(job, "WORKFLOW_MISSING", "Parent workflow could not be found.", false, now);
+            await MarkJobValidationFailedAsync(job, "WORKFLOW_MISSING", "Parent workflow could not be found.", false, now, ct);
             return DispatchDecision.SkipAndContinue;
         }
 
         if (IsTerminalStatus(workflow.Status))
         {
-            _jobDataAccess.TryUpdateQueuedJobStatus(job.Id, "Cancelled", now); //Queued -> Cancelled, no-op if something claimed it meanwhile
+            await _jobDataAccess.TryUpdateQueuedJobStatusAsync(job.Id, "Cancelled", now, ct); //Queued -> Cancelled, no-op if something claimed it meanwhile
             return DispatchDecision.SkipAndContinue;
         }
 
         if (workflow.ExecutionMode.Equals("AllOrNothing", StringComparison.OrdinalIgnoreCase))
         {
-            var allOrNothingValidation = ValidateRemainingWorkflowSteps(workflow);
+            var allOrNothingValidation = await ValidateRemainingWorkflowStepsAsync(workflow, ct);
             if (!allOrNothingValidation.IsValid)
             {
-                FailWorkflowBeforeDispatch(workflow, allOrNothingValidation.Job, allOrNothingValidation.FailureCode, allOrNothingValidation.FailureMessage, now);
+                await FailWorkflowBeforeDispatchAsync(workflow, allOrNothingValidation.Job, allOrNothingValidation.FailureCode, allOrNothingValidation.FailureMessage, now, ct);
                 return DispatchDecision.SkipAndContinue;
             }
 
             return DispatchDecision.Claim;
         }
 
-        var stepValidation = ValidateJobAgainstCurrentPose(job);
+        var stepValidation = await ValidateJobAgainstCurrentPoseAsync(job, ct);
         if (stepValidation.IsValid) return DispatchDecision.Claim;
 
-        MarkJobValidationFailed(job, stepValidation.FailureCode, stepValidation.FailureMessage, false, now);
-        FinalizeParentWorkflowIfReady(workflow.Id, now);
+        await MarkJobValidationFailedAsync(job, stepValidation.FailureCode, stepValidation.FailureMessage, false, now, ct);
+        await FinalizeParentWorkflowIfReadyAsync(workflow.Id, now, ct);
         return DispatchDecision.SkipAndContinue;
     }
 
-    private ValidationResult ValidateRemainingWorkflowSteps(Workflow workflow)
+    private async Task<ValidationResult> ValidateRemainingWorkflowStepsAsync(Workflow workflow, CancellationToken ct)
     {
-        var queuedJobs = _jobDataAccess.GetJobsByWorkflowId(workflow.Id)
+        var queuedJobs = (await _jobDataAccess.GetJobsByWorkflowIdAsync(workflow.Id, ct))
             .Where(x => x.Status.Equals("Queued", StringComparison.OrdinalIgnoreCase))
             .OrderBy(x => x.StepNumber)
             .ThenBy(x => x.Id)
             .ToList();
 
-        var pose = BuildCurrentPose(workflow.DeviceId);
+        var pose = await BuildCurrentPoseAsync(workflow.DeviceId, ct);
 
         foreach (var queuedJob in queuedJobs)
         {
-            var commandName = _jobDataAccess.GetCommandCatalogueNameById(queuedJob.CommandCatalogueId) ?? string.Empty;
-            var validation = ValidateAndSimulate(commandName, queuedJob.PayloadJson, workflow.DeviceId, pose);
+            var commandName = await _jobDataAccess.GetCommandCatalogueNameByIdAsync(queuedJob.CommandCatalogueId, ct) ?? string.Empty;
+            var validation = await ValidateAndSimulateAsync(commandName, queuedJob.PayloadJson, workflow.DeviceId, pose, ct);
             if (!validation.IsValid)
             {
                 validation.Job = queuedJob;
@@ -463,18 +463,19 @@ public class WorkDispatchService : IWorkDispatchService
         return ValidationResult.Valid();
     }
 
-    private ValidationResult ValidateJobAgainstCurrentPose(Job job)
+    private async Task<ValidationResult> ValidateJobAgainstCurrentPoseAsync(Job job, CancellationToken ct)
     {
-        var commandName = _jobDataAccess.GetCommandCatalogueNameById(job.CommandCatalogueId) ?? string.Empty;
-        var pose = BuildCurrentPose(job.DeviceId);
-        return ValidateAndSimulate(commandName, job.PayloadJson, job.DeviceId, pose);
+        var commandName = await _jobDataAccess.GetCommandCatalogueNameByIdAsync(job.CommandCatalogueId, ct) ?? string.Empty;
+        var pose = await BuildCurrentPoseAsync(job.DeviceId, ct);
+        return await ValidateAndSimulateAsync(commandName, job.PayloadJson, job.DeviceId, pose, ct);
     }
 
-    private ValidationResult ValidateAndSimulate(string commandName, string payloadJson, int deviceId, GridPose pose)
+    private async Task<ValidationResult> ValidateAndSimulateAsync(string commandName, string payloadJson, int deviceId, GridPose pose, CancellationToken ct)
     {
         if (commandName.Equals("PLACE", StringComparison.OrdinalIgnoreCase))
         {
-            return TryReadPlacePose(payloadJson, deviceId, out var placedPose, out var failure)
+            var (placed, placedPose, failure) = await TryReadPlacePoseAsync(payloadJson, deviceId, ct); //async methods cannot use out, so the result comes back as a tuple
+            return placed
                 ? ValidationResult.Valid(placedPose)
                 : ValidationResult.Invalid("PLACE_PAYLOAD_INVALID", failure ?? "PLACE requires gridX/gridY/facing payload.");
         }
@@ -489,7 +490,7 @@ public class WorkDispatchService : IWorkDispatchService
             return ValidationResult.Invalid("GRID_POSE_UNTRUSTED", "Grid movement requires trusted and aligned grid pose. Use PLACE first.");
         }
 
-        var map = _mapDataAccess.GetMapById(pose.MapId.Value);
+        var map = await _mapDataAccess.GetMapByIdAsync(pose.MapId.Value, ct);
         if (map == null || !map.IsActive)
         {
             return ValidationResult.Invalid("MAP_NOT_AVAILABLE", "Grid movement requires an active map.");
@@ -530,56 +531,56 @@ public class WorkDispatchService : IWorkDispatchService
         return ValidationResult.Valid(next);
     }
 
-    private void ExpireStaleWork(int deviceId, DateTime now)
+    private async Task ExpireStaleWorkAsync(int deviceId, DateTime now, CancellationToken ct)
     {
-        var staleJobs = _jobDataAccess.GetStaleJobsByDeviceId(deviceId, now); //PostgreSQL returns only expired Claimed/Executing rows
+        var staleJobs = await _jobDataAccess.GetStaleJobsByDeviceIdAsync(deviceId, now, ct); //PostgreSQL returns only expired Claimed/Executing rows
 
         foreach (var staleJob in staleJobs)
         {
-            SettleStaleJob(staleJob, now);
+            await SettleStaleJobAsync(staleJob, now, ct);
         }
     }
 
     // Returns true only if this call actually changed the row.
-    private bool SettleStaleJob(Job staleJob, DateTime now)
+    private async Task<bool> SettleStaleJobAsync(Job staleJob, DateTime now, CancellationToken ct)
     {
         // Each transition re-checks the row, so a robot that started or finished the job since the SELECT wins.
         if (staleJob.Status.Equals("Claimed", StringComparison.OrdinalIgnoreCase))
         {
-            return _jobDataAccess.TryRequeueStaleClaimedJob(staleJob.Id, staleJob.ClaimedAtUtc, now); //Claimed -> Queued, only if it is still this stale claim
+            return await _jobDataAccess.TryRequeueStaleClaimedJobAsync(staleJob.Id, staleJob.ClaimedAtUtc, now, ct); //Claimed -> Queued, only if it is still this stale claim
         }
 
-        if (!_jobDataAccess.TryExpireStaleExecutingJob(staleJob.Id, staleJob.ClaimedAtUtc, now)) return false; //Executing -> Expired; robot finished first, so skip side effects
+        if (!await _jobDataAccess.TryExpireStaleExecutingJobAsync(staleJob.Id, staleJob.ClaimedAtUtc, now, ct)) return false; //Executing -> Expired; robot finished first, so skip side effects
 
         staleJob.Status = "Expired";
         staleJob.ModifiedDate = now;
-        InsertJobHistory(staleJob, false, true, null, "LEASE_EXPIRED", "Job lease expired while executing. It was not automatically retried.", now);
-        InvalidatePose(staleJob.DeviceId, "Grid pose invalidated because an executing job expired.", now);
+        await InsertJobHistoryAsync(staleJob, false, true, null, "LEASE_EXPIRED", "Job lease expired while executing. It was not automatically retried.", now, ct);
+        await InvalidatePoseAsync(staleJob.DeviceId, "Grid pose invalidated because an executing job expired.", now, ct);
 
         if (staleJob.WorkflowId.HasValue)
         {
-            var workflow = _workflowDataAccess.GetWorkflowById(staleJob.WorkflowId.Value);
+            var workflow = await _workflowDataAccess.GetWorkflowByIdAsync(staleJob.WorkflowId.Value, ct);
             if (workflow != null)
             {
-                CancelQueuedWorkflowJobs(workflow.Id, now);
+                await CancelQueuedWorkflowJobsAsync(workflow.Id, now, ct);
                 workflow.Status = "Failed";
                 workflow.ModifiedDate = now;
-                _workflowDataAccess.UpdateWorkflow(workflow.Id, workflow);
-                InsertWorkflowHistoryIfMissing(workflow, false, staleJob.StepNumber, "A workflow step expired while executing.", now);
+                await _workflowDataAccess.UpdateWorkflowAsync(workflow.Id, workflow, ct);
+                await InsertWorkflowHistoryIfMissingAsync(workflow, false, staleJob.StepNumber, "A workflow step expired while executing.", now, ct);
             }
         }
 
         return true;
     }
 
-    private void MarkParentWorkflowClaimed(int? workflowId, int deviceCredentialId, DateTime now, int leaseMinutes)
+    private async Task MarkParentWorkflowClaimedAsync(int? workflowId, int deviceCredentialId, DateTime now, int leaseMinutes, CancellationToken ct)
     {
         if (!workflowId.HasValue)
         {
             return;
         }
 
-        var workflow = _workflowDataAccess.GetWorkflowById(workflowId.Value);
+        var workflow = await _workflowDataAccess.GetWorkflowByIdAsync(workflowId.Value, ct);
         if (workflow == null)
         {
             return;
@@ -595,47 +596,47 @@ public class WorkDispatchService : IWorkDispatchService
         workflow.ClaimedAtUtc ??= now;
         workflow.LeaseExpiresAtUtc = now.AddMinutes(leaseMinutes);
         workflow.ModifiedDate = now;
-        _workflowDataAccess.UpdateWorkflow(workflow.Id, workflow);
+        await _workflowDataAccess.UpdateWorkflowAsync(workflow.Id, workflow, ct);
     }
 
-    private void MarkJobValidationFailed(Job job, string failureCode, string failureMessage, bool executed, DateTime now)
+    private async Task MarkJobValidationFailedAsync(Job job, string failureCode, string failureMessage, bool executed, DateTime now, CancellationToken ct)
     {
         // Only a still-Queued job is failed, so a request that lost the claim race cannot fail the winner's job.
-        if (!_jobDataAccess.TryUpdateQueuedJobStatus(job.Id, "Failed", now)) return;
+        if (!await _jobDataAccess.TryUpdateQueuedJobStatusAsync(job.Id, "Failed", now, ct)) return;
 
         job.Status = "Failed";
         job.ModifiedDate = now;
-        InsertJobHistory(job, false, executed, null, failureCode, failureMessage, now);
+        await InsertJobHistoryAsync(job, false, executed, null, failureCode, failureMessage, now, ct);
     }
 
-    private void FailWorkflowBeforeDispatch(Workflow workflow, Job? failedJob, string failureCode, string failureMessage, DateTime now)
+    private async Task FailWorkflowBeforeDispatchAsync(Workflow workflow, Job? failedJob, string failureCode, string failureMessage, DateTime now, CancellationToken ct)
     {
         if (failedJob != null)
         {
-            MarkJobValidationFailed(failedJob, failureCode, failureMessage, false, now);
+            await MarkJobValidationFailedAsync(failedJob, failureCode, failureMessage, false, now, ct);
         }
 
-        CancelQueuedWorkflowJobs(workflow.Id, now);
+        await CancelQueuedWorkflowJobsAsync(workflow.Id, now, ct);
         workflow.Status = "Failed";
         workflow.ModifiedDate = now;
-        _workflowDataAccess.UpdateWorkflow(workflow.Id, workflow);
-        InsertWorkflowHistoryIfMissing(workflow, false, failedJob?.StepNumber, failureMessage, now);
+        await _workflowDataAccess.UpdateWorkflowAsync(workflow.Id, workflow, ct);
+        await InsertWorkflowHistoryIfMissingAsync(workflow, false, failedJob?.StepNumber, failureMessage, now, ct);
     }
 
-    private void CancelQueuedWorkflowJobs(int workflowId, DateTime now)
+    private async Task CancelQueuedWorkflowJobsAsync(int workflowId, DateTime now, CancellationToken ct)
     {
-        foreach (var job in _jobDataAccess.GetJobsByWorkflowId(workflowId).Where(x => x.Status.Equals("Queued", StringComparison.OrdinalIgnoreCase)))
+        foreach (var job in (await _jobDataAccess.GetJobsByWorkflowIdAsync(workflowId, ct)).Where(x => x.Status.Equals("Queued", StringComparison.OrdinalIgnoreCase)))
         {
-            _jobDataAccess.TryUpdateQueuedJobStatus(job.Id, "Cancelled", now); //Queued -> Cancelled, no-op if something claimed it meanwhile
+            await _jobDataAccess.TryUpdateQueuedJobStatusAsync(job.Id, "Cancelled", now, ct); //Queued -> Cancelled, no-op if something claimed it meanwhile
         }
     }
 
-    private void FinalizeParentWorkflowIfReady(int workflowId, DateTime now)
+    private async Task FinalizeParentWorkflowIfReadyAsync(int workflowId, DateTime now, CancellationToken ct)
     {
-        var workflow = _workflowDataAccess.GetWorkflowById(workflowId);
+        var workflow = await _workflowDataAccess.GetWorkflowByIdAsync(workflowId, ct);
         if (workflow == null || IsTerminalStatus(workflow.Status)) return;
 
-        var jobs = _jobDataAccess.GetJobsByWorkflowId(workflowId);
+        var jobs = await _jobDataAccess.GetJobsByWorkflowIdAsync(workflowId, ct);
         if (jobs.Any(x => !IsTerminalStatus(x.Status))) return;
 
         var hasSuccessfulStep = jobs.Any(x => x.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase));
@@ -645,16 +646,16 @@ public class WorkDispatchService : IWorkDispatchService
 
         workflow.Status = success ? "Completed" : "Failed";
         workflow.ModifiedDate = now;
-        _workflowDataAccess.UpdateWorkflow(workflow.Id, workflow);
-        InsertWorkflowHistoryIfMissing(workflow, success, jobs.FirstOrDefault(x => !x.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase))?.StepNumber, success ? null : "Workflow finished with failed steps.", now);
+        await _workflowDataAccess.UpdateWorkflowAsync(workflow.Id, workflow, ct);
+        await InsertWorkflowHistoryIfMissingAsync(workflow, success, jobs.FirstOrDefault(x => !x.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase))?.StepNumber, success ? null : "Workflow finished with failed steps.", now, ct);
     }
 
-    private void InsertJobHistory(Job job, bool success, bool executed, string? resultJson, string? failureCode, string? failureMessage, DateTime now)
+    private async Task InsertJobHistoryAsync(Job job, bool success, bool executed, string? resultJson, string? failureCode, string? failureMessage, DateTime now, CancellationToken ct)
     {
-        var command = _jobDataAccess.GetCommandCatalogueById(job.CommandCatalogueId);
+        var command = await _jobDataAccess.GetCommandCatalogueByIdAsync(job.CommandCatalogueId, ct);
         var commandName = command?.Name?.Trim() ?? $"CommandCatalogue:{job.CommandCatalogueId}";
 
-        _jobHistoryDataAccess.InsertJobHistory(new JobHistory
+        await _jobHistoryDataAccess.InsertJobHistoryAsync(new JobHistory
         {
             JobId = job.Id,
             WorkflowId = job.WorkflowId,
@@ -676,20 +677,20 @@ public class WorkDispatchService : IWorkDispatchService
             DurationMs = executed && job.ClaimedAtUtc.HasValue ? Math.Max(0, (int)Math.Round((now - job.ClaimedAtUtc.Value).TotalMilliseconds)) : null,
             RollbackOfJobHistoryId = job.RollbackOfJobHistoryId,
             CreatedDate = now
-        });
+        }, ct);
     }
 
-    private void InsertWorkflowHistoryIfMissing(Workflow workflow, bool success, int? failedStepNumber, string? failureMessage, DateTime now)
+    private async Task InsertWorkflowHistoryIfMissingAsync(Workflow workflow, bool success, int? failedStepNumber, string? failureMessage, DateTime now, CancellationToken ct)
     {
-        if (_workflowHistoryDataAccess.GetWorkflowHistoriesByWorkflowId(workflow.Id).Any()) return;
+        if ((await _workflowHistoryDataAccess.GetWorkflowHistoriesByWorkflowIdAsync(workflow.Id, ct)).Any()) return;
 
-        _workflowHistoryDataAccess.InsertWorkflowHistory(new WorkflowHistory
+        await _workflowHistoryDataAccess.InsertWorkflowHistoryAsync(new WorkflowHistory
         {
             WorkflowId = workflow.Id,
             DeviceId = workflow.DeviceId,
             ProviderType = workflow.ProviderType,
             Status = success ? "Completed" : "Failed",
-            Executed = _jobDataAccess.GetJobsByWorkflowId(workflow.Id).Any(x => x.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase)),
+            Executed = (await _jobDataAccess.GetJobsByWorkflowIdAsync(workflow.Id, ct)).Any(x => x.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase)),
             Success = success,
             StartedAtUtc = workflow.ClaimedAtUtc,
             CompletedAtUtc = now,
@@ -697,15 +698,15 @@ public class WorkDispatchService : IWorkDispatchService
             FailureMessage = failureMessage,
             RollbackOfWorkflowHistoryId = workflow.RollbackOfWorkflowHistoryId,
             CreatedDate = now
-        });
+        }, ct);
     }
 
-    private GridPose BuildCurrentPose(int deviceId)
+    private async Task<GridPose> BuildCurrentPoseAsync(int deviceId, CancellationToken ct)
     {
-        var status = _deviceStatusDataAccess.GetDeviceStatusByDeviceId(deviceId);
+        var status = await _deviceStatusDataAccess.GetDeviceStatusByDeviceIdAsync(deviceId, ct);
         return new GridPose
         {
-            MapId = status?.PoseMapId ?? _jobDataAccess.GetDeviceMapId(deviceId),
+            MapId = status?.PoseMapId ?? await _jobDataAccess.GetDeviceMapIdAsync(deviceId, ct),
             X = status?.GridX,
             Y = status?.GridY,
             Facing = status?.Facing,
@@ -714,10 +715,10 @@ public class WorkDispatchService : IWorkDispatchService
         };
     }
 
-    private bool TryReadPlacePose(string payloadJson, int deviceId, out GridPose pose, out string? failureMessage)
+    private async Task<(bool Ok, GridPose Pose, string? FailureMessage)> TryReadPlacePoseAsync(string payloadJson, int deviceId, CancellationToken ct)
     {
-        pose = new GridPose();
-        failureMessage = null;
+        var pose = new GridPose();
+        string? failureMessage = null;
 
         try
         {
@@ -725,45 +726,45 @@ public class WorkDispatchService : IWorkDispatchService
             if (document.RootElement.ValueKind != JsonValueKind.Object)
             {
                 failureMessage = "PLACE payload must be a JSON object.";
-                return false;
+                return (false, pose, failureMessage);
             }
 
             var root = document.RootElement;
             var x = TryGetInt(root, "gridX", "GridX", "x", "X");
             var y = TryGetInt(root, "gridY", "GridY", "y", "Y");
             var facing = TryGetString(root, "facing", "Facing", "direction", "Direction");
-            var mapId = TryGetInt(root, "poseMapId", "PoseMapId", "mapId", "MapId") ?? _jobDataAccess.GetDeviceMapId(deviceId);
+            var mapId = TryGetInt(root, "poseMapId", "PoseMapId", "mapId", "MapId") ?? await _jobDataAccess.GetDeviceMapIdAsync(deviceId, ct);
 
             if (!x.HasValue || !y.HasValue || string.IsNullOrWhiteSpace(facing))
             {
                 failureMessage = "PLACE requires gridX, gridY, and facing/direction.";
-                return false;
+                return (false, pose, failureMessage);
             }
 
             if (!mapId.HasValue)
             {
                 failureMessage = "PLACE requires the device to have an assigned map or a poseMapId payload value.";
-                return false;
+                return (false, pose, failureMessage);
             }
 
             facing = NormalizeFacing(facing!);
             if (facing == null)
             {
                 failureMessage = "Facing must be North, East, South, or West.";
-                return false;
+                return (false, pose, failureMessage);
             }
 
-            var map = _mapDataAccess.GetMapById(mapId.Value);
+            var map = await _mapDataAccess.GetMapByIdAsync(mapId.Value, ct);
             if (map == null || !map.IsActive)
             {
                 failureMessage = "PLACE requires an active map.";
-                return false;
+                return (false, pose, failureMessage);
             }
 
             if (!IsOnMap(map, x.Value, y.Value))
             {
                 failureMessage = "PLACE coordinates are outside the map.";
-                return false;
+                return (false, pose, failureMessage);
             }
 
             pose = new GridPose
@@ -775,25 +776,25 @@ public class WorkDispatchService : IWorkDispatchService
                 IsAligned = true,
                 IsTrusted = true
             };
-            return true;
+            return (true, pose, failureMessage);
         }
         catch (JsonException)
         {
             failureMessage = "PLACE payload must be valid JSON.";
-            return false;
+            return (false, pose, failureMessage);
         }
     }
 
-    private void InvalidatePose(int deviceId, string reason, DateTime now)
+    private async Task InvalidatePoseAsync(int deviceId, string reason, DateTime now, CancellationToken ct)
     {
-        var status = _deviceStatusDataAccess.GetDeviceStatusByDeviceId(deviceId);
+        var status = await _deviceStatusDataAccess.GetDeviceStatusByDeviceIdAsync(deviceId, ct);
         if (status == null) return;
         status.IsGridAligned = false;
         status.IsGridPoseTrusted = false;
         status.PoseConfidence = 0;
         status.StatusMessage = reason;
         status.ModifiedDate = now;
-        _deviceStatusDataAccess.UpdateDeviceStatus(status.Id, status);
+        await _deviceStatusDataAccess.UpdateDeviceStatusAsync(status.Id, status, ct);
     }
 
     private static int? TryGetInt(JsonElement root, params string[] names)

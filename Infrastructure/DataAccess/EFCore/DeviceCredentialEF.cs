@@ -99,6 +99,6 @@ public class DeviceCredentialEF : IDeviceCredentialDataAccess
 
     // SIT315 targeted auth lookup and usage write are implemented for the ADO provider only.
     private const string AdoOnly = "Targeted device credential access is only implemented for the ADO persistence provider.";
-    public DeviceCredential? GetDeviceCredentialByCredentialIdentifier(string credentialIdentifier) => throw new NotSupportedException(AdoOnly);
-    public bool UpdateDeviceCredentialLastUsed(int id, DateTime lastUsedAtUtc, string? lastUsedIpAddress, string? lastUsedUserAgent) => throw new NotSupportedException(AdoOnly);
+    public Task<DeviceCredential?> GetDeviceCredentialByCredentialIdentifierAsync(string credentialIdentifier, CancellationToken ct = default) => throw new NotSupportedException(AdoOnly);
+    public Task<bool> UpdateDeviceCredentialLastUsedAsync(int id, DateTime lastUsedAtUtc, string? lastUsedIpAddress, string? lastUsedUserAgent, CancellationToken ct = default) => throw new NotSupportedException(AdoOnly);
 }

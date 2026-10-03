@@ -142,4 +142,8 @@ public class JobHistoryRepository : IJobHistoryDataAccess, IRepository
     {
         public bool Value { get; set; }
     }
+
+    // Not the configured provider: async siblings return the sync result, no real async I/O here.
+    public Task<JobHistory?> GetJobHistoryByIdAsync(int id, CancellationToken ct = default) => Task.FromResult(GetJobHistoryById(id));
+    public Task<JobHistory> InsertJobHistoryAsync(JobHistory newJobHistory, CancellationToken ct = default) => Task.FromResult(InsertJobHistory(newJobHistory));
 }

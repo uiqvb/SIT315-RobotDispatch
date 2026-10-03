@@ -11,9 +11,9 @@ public interface IJobService
     JobResponse CreateJob(int deviceId, CreateJobRequest request, int? requestedByAppUserId = null);
     bool UpdateJob(int id, UpdateJobRequest request);
     bool DeleteJob(int id);
-    bool CancelJob(int id);
-    bool DeactivateJob(int id);
-    bool MarkJobStarted(int id, StartJobRequest request, int deviceCredentialId, int deviceId);
-    bool MarkJobCompleted(int id, CompleteJobRequest request, int deviceCredentialId, int deviceId);
-    bool MarkJobFailed(int id, FailJobRequest request, int deviceCredentialId, int deviceId);
+    Task<bool> CancelJobAsync(int id, CancellationToken ct = default);
+    Task<bool> DeactivateJobAsync(int id, CancellationToken ct = default);
+    Task<bool> MarkJobStartedAsync(int id, StartJobRequest request, int deviceCredentialId, int deviceId, CancellationToken ct = default);
+    Task<bool> MarkJobCompletedAsync(int id, CompleteJobRequest request, int deviceCredentialId, int deviceId, CancellationToken ct = default);
+    Task<bool> MarkJobFailedAsync(int id, FailJobRequest request, int deviceCredentialId, int deviceId, CancellationToken ct = default);
 }

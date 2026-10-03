@@ -232,16 +232,27 @@ public class JobEF : IJobDataAccess
             });
     }
 
+    // Not the configured provider: async siblings return the sync result, no real async I/O here.
+    public Task<Job?> GetJobByIdAsync(int id, CancellationToken ct = default) => Task.FromResult(GetJobById(id));
+    public Task<List<Job>> GetJobsByWorkflowIdAsync(int workflowId, CancellationToken ct = default) => Task.FromResult(GetJobsByWorkflowId(workflowId));
+    public Task<Job?> GetOldestQueuedJobByDeviceIdAsync(int deviceId, CancellationToken ct = default) => Task.FromResult(GetOldestQueuedJobByDeviceId(deviceId));
+    public Task<bool> UpdateJobAsync(int id, Job updatedJob, CancellationToken ct = default) => Task.FromResult(UpdateJob(id, updatedJob));
+    public Task<int?> GetDeviceMapIdAsync(int deviceId, CancellationToken ct = default) => Task.FromResult(GetDeviceMapId(deviceId));
+    public Task<string?> GetCommandCatalogueNameByIdAsync(int commandCatalogueId, CancellationToken ct = default) => Task.FromResult(GetCommandCatalogueNameById(commandCatalogueId));
+    public Task<CommandCatalogueSnapshot?> GetCommandCatalogueByIdAsync(int commandCatalogueId, CancellationToken ct = default) => Task.FromResult(GetCommandCatalogueById(commandCatalogueId));
+    public Task<int?> GetCommandCatalogueIdByNameAsync(string commandName, CancellationToken ct = default) => Task.FromResult(GetCommandCatalogueIdByName(commandName));
+    public Task<DeviceCapabilitySnapshot?> GetActiveDeviceCapabilityAsync(int deviceId, int commandCatalogueId, CancellationToken ct = default) => Task.FromResult(GetActiveDeviceCapability(deviceId, commandCatalogueId));
+
     // SIT315 guarded dispatch transitions are implemented for the ADO provider only.
     private const string AdoOnly = "Guarded dispatch transitions are only implemented for the ADO persistence provider.";
-    public List<Job> GetStaleJobsByDeviceId(int deviceId, DateTime now) => throw new NotSupportedException(AdoOnly);
-    public List<Job> GetStaleJobs(DateTime now) => throw new NotSupportedException(AdoOnly);
-    public Job? TryClaimJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime leaseExpiresAtUtc) => throw new NotSupportedException(AdoOnly);
-    public bool TryUpdateQueuedJobStatus(int jobId, string newStatus, DateTime modifiedDate) => throw new NotSupportedException(AdoOnly);
-    public Job? TryMarkClaimedJobExecuting(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime modifiedDate) => throw new NotSupportedException(AdoOnly);
-    public Job? TryFinishClaimedJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, string[] fromStatuses, string newStatus, DateTime modifiedDate) => throw new NotSupportedException(AdoOnly);
-    public bool TryRequeueStaleClaimedJob(int jobId, DateTime? claimedAtUtc, DateTime now) => throw new NotSupportedException(AdoOnly);
-    public bool TryExpireStaleExecutingJob(int jobId, DateTime? claimedAtUtc, DateTime now) => throw new NotSupportedException(AdoOnly);
+    public Task<List<Job>> GetStaleJobsByDeviceIdAsync(int deviceId, DateTime now, CancellationToken ct = default) => throw new NotSupportedException(AdoOnly);
+    public Task<List<Job>> GetStaleJobsAsync(DateTime now, CancellationToken ct = default) => throw new NotSupportedException(AdoOnly);
+    public Task<Job?> TryClaimJobAsync(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime leaseExpiresAtUtc, CancellationToken ct = default) => throw new NotSupportedException(AdoOnly);
+    public Task<bool> TryUpdateQueuedJobStatusAsync(int jobId, string newStatus, DateTime modifiedDate, CancellationToken ct = default) => throw new NotSupportedException(AdoOnly);
+    public Task<Job?> TryMarkClaimedJobExecutingAsync(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime modifiedDate, CancellationToken ct = default) => throw new NotSupportedException(AdoOnly);
+    public Task<Job?> TryFinishClaimedJobAsync(int jobId, int deviceCredentialId, DateTime claimedAtUtc, string[] fromStatuses, string newStatus, DateTime modifiedDate, CancellationToken ct = default) => throw new NotSupportedException(AdoOnly);
+    public Task<bool> TryRequeueStaleClaimedJobAsync(int jobId, DateTime? claimedAtUtc, DateTime now, CancellationToken ct = default) => throw new NotSupportedException(AdoOnly);
+    public Task<bool> TryExpireStaleExecutingJobAsync(int jobId, DateTime? claimedAtUtc, DateTime now, CancellationToken ct = default) => throw new NotSupportedException(AdoOnly);
 
     private bool Exists(string sql, NpgsqlParameter[] parameters)
     {

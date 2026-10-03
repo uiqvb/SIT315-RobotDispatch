@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using RobotControllerApi.BoundedContexts.Auth.Constants;
 using RobotControllerApi.BoundedContexts.Auth.Services;
 using RobotControllerApi.BoundedContexts.Jobs.Dtos;
 using RobotControllerApi.BoundedContexts.Jobs.Services;
+using RobotControllerApi.Infrastructure;
 
 namespace RobotControllerApi.BoundedContexts.Jobs.Controllers;
 
@@ -22,13 +24,14 @@ public class WorkDispatchController : ControllerBase
     }
 
     [HttpPost("claim-next")]
-    public ActionResult ClaimNext(int deviceId, ClaimJobRequest request)
+    [EnableRateLimiting(DispatchBackpressure.PolicyName)] //shares the dispatch permit pool
+    public async Task<ActionResult> ClaimNext(int deviceId, ClaimJobRequest request, CancellationToken ct)
     {
         try
         {
             var deviceCredentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User); //gets the credientialID, that means the ID of the crediential that exists. Crediential=entire record around the password/secret
             var authenticatedDeviceId = _currentUserAccessor.GetRequiredDeviceId(User); //device the credential authenticated as, from the auth claims
-            var response = _service.ClaimNextWorkItem(deviceId, request, deviceCredentialId, authenticatedDeviceId);
+            var response = await _service.ClaimNextWorkItemAsync(deviceId, request, deviceCredentialId, authenticatedDeviceId, ct); //request thread is released while PostgreSQL works
             if (response == null) return NoContent();
             return Ok(response);
         }
@@ -40,13 +43,13 @@ public class WorkDispatchController : ControllerBase
     // Called by a robot on reconnect, after it rolled itself back while the backend was
     // unreachable. Until this lands the backend's pose is stale by however far the robot drove.
     [HttpPost("report-offline-rollback")]
-    public ActionResult ReportOfflineRollback(int deviceId, ReportOfflineRollbackRequest request)
+    public async Task<ActionResult> ReportOfflineRollback(int deviceId, ReportOfflineRollbackRequest request, CancellationToken ct)
     {
         try
         {
             var deviceCredentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
             var authenticatedDeviceId = _currentUserAccessor.GetRequiredDeviceId(User); //device the credential authenticated as, from the auth claims
-            return Ok(_service.ReportOfflineRollback(deviceId, request, deviceCredentialId, authenticatedDeviceId));
+            return Ok(await _service.ReportOfflineRollbackAsync(deviceId, request, deviceCredentialId, authenticatedDeviceId, ct));
         }
         catch (UnauthorizedAccessException ex) { return Unauthorized(ex.Message); }
         catch (ArgumentException ex) { return BadRequest(ex.Message); }

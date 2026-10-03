@@ -75,7 +75,7 @@ public class StaleWorkExpiryService : BackgroundService
         using var scope = _serviceProvider.CreateScope();
         var dispatchService = scope.ServiceProvider.GetRequiredService<IWorkDispatchService>();
 
-        var expired = dispatchService.ExpireStaleWorkForAllDevices();
+        var expired = await dispatchService.ExpireStaleWorkForAllDevicesAsync(cancellationToken);
         if (expired > 0)
         {
             _logger.LogInformation("Stale work sweep settled {ExpiredCount} expired job lease(s).", expired);

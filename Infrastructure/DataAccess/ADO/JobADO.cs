@@ -36,15 +36,17 @@ public class JobADO : IJobDataAccess
         return results;
     }
 
+    private const string GetJobByIdSql =
+        @"SELECT id, deviceid, workflowid, stepnumber, commandcatalogueid, payloadjson, providertype, status, requestedbyappuserid, claimedbydevicecredentialid, claimedatutc, leaseexpiresatutc, isrollback, rollbackofjobhistoryid, createddate, modifieddate
+              FROM public.job
+              WHERE id = @id;";
+
     public Job? GetJobById(int id)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT id, deviceid, workflowid, stepnumber, commandcatalogueid, payloadjson, providertype, status, requestedbyappuserid, claimedbydevicecredentialid, claimedatutc, leaseexpiresatutc, isrollback, rollbackofjobhistoryid, createddate, modifieddate
-              FROM public.job
-              WHERE id = @id;", conn);
+        using var cmd = new NpgsqlCommand(GetJobByIdSql, conn);
 
         cmd.Parameters.AddWithValue("id", id);
 
@@ -52,6 +54,9 @@ public class JobADO : IJobDataAccess
 
         return dr.Read() ? MapJob(dr) : null;
     }
+
+    public Task<Job?> GetJobByIdAsync(int id, CancellationToken ct = default) =>
+        AdoAsync.QuerySingleAsync(_dbConfig, GetJobByIdSql, cmd => cmd.Parameters.AddWithValue("id", id), MapJob, ct);
 
     public List<Job> GetJobsByDeviceId(int deviceId)
     {
@@ -78,6 +83,12 @@ public class JobADO : IJobDataAccess
         return results;
     }
 
+    private const string GetJobsByWorkflowIdSql =
+        @"SELECT id, deviceid, workflowid, stepnumber, commandcatalogueid, payloadjson, providertype, status, requestedbyappuserid, claimedbydevicecredentialid, claimedatutc, leaseexpiresatutc, isrollback, rollbackofjobhistoryid, createddate, modifieddate
+              FROM public.job
+              WHERE workflowid = @workflowId
+              ORDER BY stepnumber, id;";
+
     public List<Job> GetJobsByWorkflowId(int workflowId)
     {
         var results = new List<Job>();
@@ -85,11 +96,7 @@ public class JobADO : IJobDataAccess
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT id, deviceid, workflowid, stepnumber, commandcatalogueid, payloadjson, providertype, status, requestedbyappuserid, claimedbydevicecredentialid, claimedatutc, leaseexpiresatutc, isrollback, rollbackofjobhistoryid, createddate, modifieddate
-              FROM public.job
-              WHERE workflowid = @workflowId
-              ORDER BY stepnumber, id;", conn);
+        using var cmd = new NpgsqlCommand(GetJobsByWorkflowIdSql, conn);
 
         cmd.Parameters.AddWithValue("workflowId", workflowId);
 
@@ -102,6 +109,9 @@ public class JobADO : IJobDataAccess
 
         return results;
     }
+
+    public Task<List<Job>> GetJobsByWorkflowIdAsync(int workflowId, CancellationToken ct = default) =>
+        AdoAsync.QueryListAsync(_dbConfig, GetJobsByWorkflowIdSql, cmd => cmd.Parameters.AddWithValue("workflowId", workflowId), MapJob, ct);
 
     public Job? GetOldestQueuedStandaloneJobByDeviceId(int deviceId)
     {
@@ -122,14 +132,8 @@ public class JobADO : IJobDataAccess
         return dr.Read() ? MapJob(dr) : null;
     }
 
-
-    public Job? GetOldestQueuedJobByDeviceId(int deviceId)
-    {
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
-        using var cmd = new NpgsqlCommand(
-            @"SELECT j.id, j.deviceid, j.workflowid, j.stepnumber, j.commandcatalogueid, j.payloadjson, j.providertype, j.status, j.requestedbyappuserid, j.claimedbydevicecredentialid, j.claimedatutc, j.leaseexpiresatutc, j.isrollback, j.rollbackofjobhistoryid, j.createddate, j.modifieddate
+    private const string GetOldestQueuedJobByDeviceIdSql =
+        @"SELECT j.id, j.deviceid, j.workflowid, j.stepnumber, j.commandcatalogueid, j.payloadjson, j.providertype, j.status, j.requestedbyappuserid, j.claimedbydevicecredentialid, j.claimedatutc, j.leaseexpiresatutc, j.isrollback, j.rollbackofjobhistoryid, j.createddate, j.modifieddate
               FROM public.job j
               LEFT JOIN public.workflow w ON w.id = j.workflowid
               WHERE j.deviceid = @deviceId
@@ -158,7 +162,14 @@ public class JobADO : IJobDataAccess
                 COALESCE(j.stepnumber, 0),
                 j.createddate,
                 j.id
-              LIMIT 1;", conn);
+              LIMIT 1;";
+
+    public Job? GetOldestQueuedJobByDeviceId(int deviceId)
+    {
+        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
+        conn.Open();
+
+        using var cmd = new NpgsqlCommand(GetOldestQueuedJobByDeviceIdSql, conn);
 
         cmd.Parameters.AddWithValue("deviceId", deviceId);
 
@@ -166,6 +177,9 @@ public class JobADO : IJobDataAccess
 
         return dr.Read() ? MapJob(dr) : null;
     }
+
+    public Task<Job?> GetOldestQueuedJobByDeviceIdAsync(int deviceId, CancellationToken ct = default) =>
+        AdoAsync.QuerySingleAsync(_dbConfig, GetOldestQueuedJobByDeviceIdSql, cmd => cmd.Parameters.AddWithValue("deviceId", deviceId), MapJob, ct);
 
     public Job InsertJob(Job newJob)
     {
@@ -190,13 +204,8 @@ public class JobADO : IJobDataAccess
         throw new InvalidOperationException("Job insert failed.");
     }
 
-    public bool UpdateJob(int id, Job updatedJob)
-    {
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
-        using var cmd = new NpgsqlCommand(
-            @"UPDATE public.job
+    private const string UpdateJobSql =
+        @"UPDATE public.job
               SET deviceid = @deviceId,
                   workflowid = @workflowId,
                   stepnumber = @stepNumber,
@@ -211,13 +220,27 @@ public class JobADO : IJobDataAccess
                   isrollback = @isRollback,
                   rollbackofjobhistoryid = @rollbackOfJobHistoryId,
                   modifieddate = @modifiedDate
-              WHERE id = @id;", conn);
+              WHERE id = @id;";
+
+    public bool UpdateJob(int id, Job updatedJob)
+    {
+        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
+        conn.Open();
+
+        using var cmd = new NpgsqlCommand(UpdateJobSql, conn);
 
         cmd.Parameters.AddWithValue("id", id);
         AddParameters(cmd, updatedJob);
 
         return cmd.ExecuteNonQuery() > 0;
     }
+
+    public async Task<bool> UpdateJobAsync(int id, Job updatedJob, CancellationToken ct = default) =>
+        await AdoAsync.ExecuteAsync(_dbConfig, UpdateJobSql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("id", id);
+            AddParameters(cmd, updatedJob);
+        }, ct) > 0;
 
     public bool DeleteJob(int id)
     {
@@ -250,19 +273,27 @@ public class JobADO : IJobDataAccess
         return (bool)(cmd.ExecuteScalar() ?? false);
     }
 
+    private const string GetDeviceMapIdSql =
+        @"SELECT mapid
+              FROM public.device
+              WHERE id = @deviceId;";
+
     public int? GetDeviceMapId(int deviceId)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT mapid
-              FROM public.device
-              WHERE id = @deviceId;", conn);
+        using var cmd = new NpgsqlCommand(GetDeviceMapIdSql, conn);
 
         cmd.Parameters.AddWithValue("deviceId", deviceId);
 
         var result = cmd.ExecuteScalar();
+        return result == null || result == DBNull.Value ? null : Convert.ToInt32(result);
+    }
+
+    public async Task<int?> GetDeviceMapIdAsync(int deviceId, CancellationToken ct = default)
+    {
+        var result = await AdoAsync.ScalarAsync(_dbConfig, GetDeviceMapIdSql, cmd => cmd.Parameters.AddWithValue("deviceId", deviceId), ct);
         return result == null || result == DBNull.Value ? null : Convert.ToInt32(result);
     }
 
@@ -283,15 +314,17 @@ public class JobADO : IJobDataAccess
         return (bool)(cmd.ExecuteScalar() ?? false);
     }
 
+    private const string GetCommandCatalogueNameByIdSql =
+        @"SELECT name
+              FROM public.commandcatalogue
+              WHERE id = @commandCatalogueId;";
+
     public string? GetCommandCatalogueNameById(int commandCatalogueId)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT name
-              FROM public.commandcatalogue
-              WHERE id = @commandCatalogueId;", conn);
+        using var cmd = new NpgsqlCommand(GetCommandCatalogueNameByIdSql, conn);
 
         cmd.Parameters.AddWithValue("commandCatalogueId", commandCatalogueId);
 
@@ -299,42 +332,57 @@ public class JobADO : IJobDataAccess
         return result == null || result == DBNull.Value ? null : result.ToString();
     }
 
+    public async Task<string?> GetCommandCatalogueNameByIdAsync(int commandCatalogueId, CancellationToken ct = default)
+    {
+        var result = await AdoAsync.ScalarAsync(_dbConfig, GetCommandCatalogueNameByIdSql, cmd => cmd.Parameters.AddWithValue("commandCatalogueId", commandCatalogueId), ct);
+        return result == null || result == DBNull.Value ? null : result.ToString();
+    }
+
+    private const string GetCommandCatalogueByIdSql =
+        @"SELECT id, name, executionkind, rollbackkind, inversecommandname, requiresduration, isactive
+              FROM public.commandcatalogue
+              WHERE id = @commandCatalogueId;";
+
     public CommandCatalogueSnapshot? GetCommandCatalogueById(int commandCatalogueId)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT id, name, executionkind, rollbackkind, inversecommandname, requiresduration, isactive
-              FROM public.commandcatalogue
-              WHERE id = @commandCatalogueId;", conn);
+        using var cmd = new NpgsqlCommand(GetCommandCatalogueByIdSql, conn);
 
         cmd.Parameters.AddWithValue("commandCatalogueId", commandCatalogueId);
 
         using var dr = cmd.ExecuteReader();
         if (!dr.Read()) return null;
 
-        return new CommandCatalogueSnapshot
-        {
-            Id = dr.GetInt32(0),
-            Name = dr.GetString(1),
-            ExecutionKind = dr.GetString(2),
-            RollbackKind = dr.GetString(3),
-            InverseCommandName = dr.IsDBNull(4) ? null : dr.GetString(4),
-            RequiresDuration = dr.GetBoolean(5),
-            IsActive = dr.GetBoolean(6)
-        };
+        return MapCommandCatalogue(dr);
     }
+
+    public Task<CommandCatalogueSnapshot?> GetCommandCatalogueByIdAsync(int commandCatalogueId, CancellationToken ct = default) =>
+        AdoAsync.QuerySingleAsync(_dbConfig, GetCommandCatalogueByIdSql, cmd => cmd.Parameters.AddWithValue("commandCatalogueId", commandCatalogueId), MapCommandCatalogue, ct);
+
+    private static CommandCatalogueSnapshot MapCommandCatalogue(NpgsqlDataReader dr) => new()
+    {
+        Id = dr.GetInt32(0),
+        Name = dr.GetString(1),
+        ExecutionKind = dr.GetString(2),
+        RollbackKind = dr.GetString(3),
+        InverseCommandName = dr.IsDBNull(4) ? null : dr.GetString(4),
+        RequiresDuration = dr.GetBoolean(5),
+        IsActive = dr.GetBoolean(6)
+    };
+
+    private const string GetCommandCatalogueIdByNameSql =
+        @"SELECT id
+              FROM public.commandcatalogue
+              WHERE lower(name) = lower(@commandName) AND isactive = true;";
 
     public int? GetCommandCatalogueIdByName(string commandName)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT id
-              FROM public.commandcatalogue
-              WHERE lower(name) = lower(@commandName) AND isactive = true;", conn);
+        using var cmd = new NpgsqlCommand(GetCommandCatalogueIdByNameSql, conn);
 
         cmd.Parameters.AddWithValue("commandName", commandName);
 
@@ -342,15 +390,23 @@ public class JobADO : IJobDataAccess
         return result == null || result == DBNull.Value ? null : Convert.ToInt32(result);
     }
 
+    public async Task<int?> GetCommandCatalogueIdByNameAsync(string commandName, CancellationToken ct = default)
+    {
+        var result = await AdoAsync.ScalarAsync(_dbConfig, GetCommandCatalogueIdByNameSql, cmd => cmd.Parameters.AddWithValue("commandName", commandName), ct);
+        return result == null || result == DBNull.Value ? null : Convert.ToInt32(result);
+    }
+
+    private const string GetActiveDeviceCapabilitySql =
+        @"SELECT id, deviceid, commandcatalogueid, requiresmap, isactive
+              FROM public.devicecapability
+              WHERE deviceid = @deviceId AND commandcatalogueid = @commandCatalogueId AND isactive = true;";
+
     public DeviceCapabilitySnapshot? GetActiveDeviceCapability(int deviceId, int commandCatalogueId)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT id, deviceid, commandcatalogueid, requiresmap, isactive
-              FROM public.devicecapability
-              WHERE deviceid = @deviceId AND commandcatalogueid = @commandCatalogueId AND isactive = true;", conn);
+        using var cmd = new NpgsqlCommand(GetActiveDeviceCapabilitySql, conn);
 
         cmd.Parameters.AddWithValue("deviceId", deviceId);
         cmd.Parameters.AddWithValue("commandCatalogueId", commandCatalogueId);
@@ -359,15 +415,24 @@ public class JobADO : IJobDataAccess
 
         if (!dr.Read()) return null;
 
-        return new DeviceCapabilitySnapshot
-        {
-            Id = dr.GetInt32(0),
-            DeviceId = dr.GetInt32(1),
-            CommandCatalogueId = dr.GetInt32(2),
-            RequiresMap = dr.GetBoolean(3),
-            IsActive = dr.GetBoolean(4)
-        };
+        return MapDeviceCapability(dr);
     }
+
+    public Task<DeviceCapabilitySnapshot?> GetActiveDeviceCapabilityAsync(int deviceId, int commandCatalogueId, CancellationToken ct = default) =>
+        AdoAsync.QuerySingleAsync(_dbConfig, GetActiveDeviceCapabilitySql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("deviceId", deviceId);
+            cmd.Parameters.AddWithValue("commandCatalogueId", commandCatalogueId);
+        }, MapDeviceCapability, ct);
+
+    private static DeviceCapabilitySnapshot MapDeviceCapability(NpgsqlDataReader dr) => new()
+    {
+        Id = dr.GetInt32(0),
+        DeviceId = dr.GetInt32(1),
+        CommandCatalogueId = dr.GetInt32(2),
+        RequiresMap = dr.GetBoolean(3),
+        IsActive = dr.GetBoolean(4)
+    };
 
     public bool IsDeviceGridPoseTrustedAndAligned(int deviceId)
     {
@@ -414,71 +479,36 @@ public class JobADO : IJobDataAccess
 
     private const string JobColumns = "id, deviceid, workflowid, stepnumber, commandcatalogueid, payloadjson, providertype, status, requestedbyappuserid, claimedbydevicecredentialid, claimedatutc, leaseexpiresatutc, isrollback, rollbackofjobhistoryid, createddate, modifieddate";
 
-    public List<Job> GetStaleJobsByDeviceId(int deviceId, DateTime now)
-    {
-        var results = new List<Job>();
-
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
+    public Task<List<Job>> GetStaleJobsByDeviceIdAsync(int deviceId, DateTime now, CancellationToken ct = default) =>
         // Filters in SQL, so only stale rows cross the wire instead of the device's whole job history.
-        using var cmd = new NpgsqlCommand(
+        AdoAsync.QueryListAsync(_dbConfig,
             $@"SELECT {JobColumns}
               FROM public.job
               WHERE deviceid = @deviceId
                 AND status IN ('Claimed', 'Executing')
                 AND leaseexpiresatutc IS NOT NULL
                 AND leaseexpiresatutc <= @now
-              ORDER BY createddate, id;", conn);
+              ORDER BY createddate, id;",
+            cmd =>
+            {
+                cmd.Parameters.AddWithValue("deviceId", deviceId);
+                cmd.Parameters.AddWithValue("now", now);
+            }, MapJob, ct);
 
-        cmd.Parameters.AddWithValue("deviceId", deviceId);
-        cmd.Parameters.AddWithValue("now", now);
-
-        using var dr = cmd.ExecuteReader();
-
-        while (dr.Read())
-        {
-            results.Add(MapJob(dr));
-        }
-
-        return results;
-    }
-
-    public List<Job> GetStaleJobs(DateTime now)
-    {
-        var results = new List<Job>();
-
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
+    public Task<List<Job>> GetStaleJobsAsync(DateTime now, CancellationToken ct = default) =>
         // Global sweep: only expired Claimed/Executing rows leave the database, never the whole job table.
-        using var cmd = new NpgsqlCommand(
+        AdoAsync.QueryListAsync(_dbConfig,
             $@"SELECT {JobColumns}
               FROM public.job
               WHERE status IN ('Claimed', 'Executing')
                 AND leaseexpiresatutc IS NOT NULL
                 AND leaseexpiresatutc <= @now
-              ORDER BY createddate, id;", conn);
+              ORDER BY createddate, id;",
+            cmd => cmd.Parameters.AddWithValue("now", now), MapJob, ct);
 
-        cmd.Parameters.AddWithValue("now", now);
-
-        using var dr = cmd.ExecuteReader();
-
-        while (dr.Read())
-        {
-            results.Add(MapJob(dr));
-        }
-
-        return results;
-    }
-
-    public Job? TryClaimJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime leaseExpiresAtUtc)
-    {
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
+    public Task<Job?> TryClaimJobAsync(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime leaseExpiresAtUtc, CancellationToken ct = default) =>
         // Only one concurrent caller can match status = 'Queued'; every other caller gets zero rows.
-        using var cmd = new NpgsqlCommand(
+        AdoAsync.QuerySingleAsync(_dbConfig,
             $@"UPDATE public.job
               SET status = 'Claimed',
                   claimedbydevicecredentialid = @deviceCredentialId,
@@ -487,51 +517,37 @@ public class JobADO : IJobDataAccess
                   modifieddate = @claimedAtUtc
               WHERE id = @id
                 AND status = 'Queued'
-              RETURNING {JobColumns};", conn);
+              RETURNING {JobColumns};",
+            cmd =>
+            {
+                cmd.Parameters.AddWithValue("id", jobId);
+                cmd.Parameters.AddWithValue("deviceCredentialId", deviceCredentialId);
+                cmd.Parameters.AddWithValue("claimedAtUtc", claimedAtUtc);
+                cmd.Parameters.AddWithValue("leaseExpiresAtUtc", leaseExpiresAtUtc);
+            }, MapJob, ct);
 
-        cmd.Parameters.AddWithValue("id", jobId);
-        cmd.Parameters.AddWithValue("deviceCredentialId", deviceCredentialId);
-        cmd.Parameters.AddWithValue("claimedAtUtc", claimedAtUtc);
-        cmd.Parameters.AddWithValue("leaseExpiresAtUtc", leaseExpiresAtUtc);
-
-        using var dr = cmd.ExecuteReader();
-
-        return dr.Read() ? MapJob(dr) : null;
-    }
-
-    public bool TryUpdateQueuedJobStatus(int jobId, string newStatus, DateTime modifiedDate)
-    {
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
+    public async Task<bool> TryUpdateQueuedJobStatusAsync(int jobId, string newStatus, DateTime modifiedDate, CancellationToken ct = default) =>
         // Used for cancel and validation-fail writes, which must never land on a job someone already claimed.
-        using var cmd = new NpgsqlCommand(
+        await AdoAsync.ExecuteAsync(_dbConfig,
             @"UPDATE public.job
               SET status = @newStatus,
                   modifieddate = @modifiedDate
               WHERE id = @id
-                AND status = 'Queued';", conn);
+                AND status = 'Queued';",
+            cmd =>
+            {
+                cmd.Parameters.AddWithValue("id", jobId);
+                cmd.Parameters.AddWithValue("newStatus", newStatus);
+                cmd.Parameters.AddWithValue("modifiedDate", modifiedDate);
+            }, ct) > 0;
 
-        cmd.Parameters.AddWithValue("id", jobId);
-        cmd.Parameters.AddWithValue("newStatus", newStatus);
-        cmd.Parameters.AddWithValue("modifiedDate", modifiedDate);
-
-        return cmd.ExecuteNonQuery() > 0;
-    }
-
-    public Job? TryMarkClaimedJobExecuting(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime modifiedDate)
-    {
+    public Task<Job?> TryMarkClaimedJobExecutingAsync(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime modifiedDate, CancellationToken ct = default) =>
         //started is the same guarded update, from Claimed only
-        return TryFinishClaimedJob(jobId, deviceCredentialId, claimedAtUtc, new[] { "Claimed" }, "Executing", modifiedDate);
-    }
+        TryFinishClaimedJobAsync(jobId, deviceCredentialId, claimedAtUtc, new[] { "Claimed" }, "Executing", modifiedDate, ct);
 
-    public Job? TryFinishClaimedJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, string[] fromStatuses, string newStatus, DateTime modifiedDate)
-    {
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
+    public Task<Job?> TryFinishClaimedJobAsync(int jobId, int deviceCredentialId, DateTime claimedAtUtc, string[] fromStatuses, string newStatus, DateTime modifiedDate, CancellationToken ct = default) =>
         // claimedatutc pins the exact claim, so a late request from an earlier claim of the same job matches nothing.
-        using var cmd = new NpgsqlCommand(
+        AdoAsync.QuerySingleAsync(_dbConfig,
             $@"UPDATE public.job
               SET status = @newStatus,
                   modifieddate = @modifiedDate
@@ -539,27 +555,20 @@ public class JobADO : IJobDataAccess
                 AND status = ANY(@fromStatuses)
                 AND claimedbydevicecredentialid = @deviceCredentialId
                 AND claimedatutc = @claimedAtUtc
-              RETURNING {JobColumns};", conn);
+              RETURNING {JobColumns};",
+            cmd =>
+            {
+                cmd.Parameters.AddWithValue("id", jobId);
+                cmd.Parameters.AddWithValue("newStatus", newStatus);
+                cmd.Parameters.AddWithValue("modifiedDate", modifiedDate);
+                cmd.Parameters.AddWithValue("fromStatuses", fromStatuses);
+                cmd.Parameters.AddWithValue("deviceCredentialId", deviceCredentialId);
+                cmd.Parameters.AddWithValue("claimedAtUtc", claimedAtUtc);
+            }, MapJob, ct);
 
-        cmd.Parameters.AddWithValue("id", jobId);
-        cmd.Parameters.AddWithValue("newStatus", newStatus);
-        cmd.Parameters.AddWithValue("modifiedDate", modifiedDate);
-        cmd.Parameters.AddWithValue("fromStatuses", fromStatuses);
-        cmd.Parameters.AddWithValue("deviceCredentialId", deviceCredentialId);
-        cmd.Parameters.AddWithValue("claimedAtUtc", claimedAtUtc);
-
-        using var dr = cmd.ExecuteReader();
-
-        return dr.Read() ? MapJob(dr) : null;
-    }
-
-    public bool TryRequeueStaleClaimedJob(int jobId, DateTime? claimedAtUtc, DateTime now)
-    {
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
+    public async Task<bool> TryRequeueStaleClaimedJobAsync(int jobId, DateTime? claimedAtUtc, DateTime now, CancellationToken ct = default) =>
         // Requeues only if the row is still the same claim and its lease really has passed.
-        using var cmd = new NpgsqlCommand(
+        await AdoAsync.ExecuteAsync(_dbConfig,
             @"UPDATE public.job
               SET status = 'Queued',
                   claimedbydevicecredentialid = NULL,
@@ -569,36 +578,30 @@ public class JobADO : IJobDataAccess
               WHERE id = @id
                 AND status = 'Claimed'
                 AND claimedatutc IS NOT DISTINCT FROM @claimedAtUtc
-                AND leaseexpiresatutc <= @now;", conn);
+                AND leaseexpiresatutc <= @now;",
+            cmd =>
+            {
+                cmd.Parameters.AddWithValue("id", jobId);
+                cmd.Parameters.Add(new NpgsqlParameter("claimedAtUtc", NpgsqlDbType.Timestamp) { Value = (object?)claimedAtUtc ?? DBNull.Value });
+                cmd.Parameters.AddWithValue("now", now);
+            }, ct) > 0;
 
-        cmd.Parameters.AddWithValue("id", jobId);
-        cmd.Parameters.Add(new NpgsqlParameter("claimedAtUtc", NpgsqlDbType.Timestamp) { Value = (object?)claimedAtUtc ?? DBNull.Value });
-        cmd.Parameters.AddWithValue("now", now);
-
-        return cmd.ExecuteNonQuery() > 0;
-    }
-
-    public bool TryExpireStaleExecutingJob(int jobId, DateTime? claimedAtUtc, DateTime now)
-    {
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
+    public async Task<bool> TryExpireStaleExecutingJobAsync(int jobId, DateTime? claimedAtUtc, DateTime now, CancellationToken ct = default) =>
         // Expires only if the robot has not completed or failed this claim in the meantime.
-        using var cmd = new NpgsqlCommand(
+        await AdoAsync.ExecuteAsync(_dbConfig,
             @"UPDATE public.job
               SET status = 'Expired',
                   modifieddate = @now
               WHERE id = @id
                 AND status = 'Executing'
                 AND claimedatutc IS NOT DISTINCT FROM @claimedAtUtc
-                AND leaseexpiresatutc <= @now;", conn);
-
-        cmd.Parameters.AddWithValue("id", jobId);
-        cmd.Parameters.Add(new NpgsqlParameter("claimedAtUtc", NpgsqlDbType.Timestamp) { Value = (object?)claimedAtUtc ?? DBNull.Value });
-        cmd.Parameters.AddWithValue("now", now);
-
-        return cmd.ExecuteNonQuery() > 0;
-    }
+                AND leaseexpiresatutc <= @now;",
+            cmd =>
+            {
+                cmd.Parameters.AddWithValue("id", jobId);
+                cmd.Parameters.Add(new NpgsqlParameter("claimedAtUtc", NpgsqlDbType.Timestamp) { Value = (object?)claimedAtUtc ?? DBNull.Value });
+                cmd.Parameters.AddWithValue("now", now);
+            }, ct) > 0;
 
     private static void AddParameters(NpgsqlCommand cmd, Job model)
     {

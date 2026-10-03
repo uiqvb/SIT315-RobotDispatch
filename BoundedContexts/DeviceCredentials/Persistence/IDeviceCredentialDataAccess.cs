@@ -11,6 +11,6 @@ public interface IDeviceCredentialDataAccess
     DeviceCredential InsertDeviceCredential(DeviceCredential newDeviceCredential);
     bool UpdateDeviceCredential(int id, DeviceCredential updatedDeviceCredential);
     bool DeleteDeviceCredential(int id);
-    DeviceCredential? GetDeviceCredentialByCredentialIdentifier(string credentialIdentifier);
-    bool UpdateDeviceCredentialLastUsed(int id, DateTime lastUsedAtUtc, string? lastUsedIpAddress, string? lastUsedUserAgent);
+    Task<DeviceCredential?> GetDeviceCredentialByCredentialIdentifierAsync(string credentialIdentifier, CancellationToken ct = default);
+    Task<bool> UpdateDeviceCredentialLastUsedAsync(int id, DateTime lastUsedAtUtc, string? lastUsedIpAddress, string? lastUsedUserAgent, CancellationToken ct = default);
 }

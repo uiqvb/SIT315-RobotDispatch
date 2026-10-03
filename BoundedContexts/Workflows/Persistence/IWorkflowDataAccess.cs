@@ -13,4 +13,8 @@ public interface IWorkflowDataAccess
     bool DeleteWorkflow(int id);
     bool DeviceExistsAndActive(int deviceId);
     bool DeviceCredentialOwnsDevice(int deviceCredentialId, int deviceId);
+
+    // Async siblings for the dispatch path; the sync versions above stay for other callers.
+    Task<Workflow?> GetWorkflowByIdAsync(int id, CancellationToken ct = default);
+    Task<bool> UpdateWorkflowAsync(int id, Workflow updatedWorkflow, CancellationToken ct = default);
 }

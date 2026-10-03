@@ -37,17 +37,19 @@ public class WorkflowADO : IWorkflowDataAccess
         return results;
     }
 
+    private const string GetWorkflowByIdSql =
+        @"SELECT id, deviceid, name, description, schemaversion, executionmode, providertype, status,
+                     requestedbyappuserid, claimedbydevicecredentialid, claimedatutc, leaseexpiresatutc,
+                     isrollback, rollbackofworkflowhistoryid, createddate, modifieddate
+              FROM public.workflow
+              WHERE id = @Id;";
+
     public Workflow? GetWorkflowById(int id)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT id, deviceid, name, description, schemaversion, executionmode, providertype, status,
-                     requestedbyappuserid, claimedbydevicecredentialid, claimedatutc, leaseexpiresatutc,
-                     isrollback, rollbackofworkflowhistoryid, createddate, modifieddate
-              FROM public.workflow
-              WHERE id = @Id;", conn);
+        using var cmd = new NpgsqlCommand(GetWorkflowByIdSql, conn);
 
         cmd.Parameters.AddWithValue("@Id", id);
 
@@ -55,6 +57,9 @@ public class WorkflowADO : IWorkflowDataAccess
 
         return dr.Read() ? MapWorkflow(dr) : null;
     }
+
+    public Task<Workflow?> GetWorkflowByIdAsync(int id, CancellationToken ct = default) =>
+        AdoAsync.QuerySingleAsync(_dbConfig, GetWorkflowByIdSql, cmd => cmd.Parameters.AddWithValue("@Id", id), MapWorkflow, ct);
 
     public List<Workflow> GetWorkflowsByDeviceId(int deviceId)
     {
@@ -133,13 +138,8 @@ public class WorkflowADO : IWorkflowDataAccess
         throw new InvalidOperationException("Workflow insert failed.");
     }
 
-    public bool UpdateWorkflow(int id, Workflow updatedWorkflow)
-    {
-        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
-        conn.Open();
-
-        using var cmd = new NpgsqlCommand(
-            @"UPDATE public.workflow
+    private const string UpdateWorkflowSql =
+        @"UPDATE public.workflow
               SET deviceid = @DeviceId,
                   name = @Name,
                   description = @Description,
@@ -154,13 +154,27 @@ public class WorkflowADO : IWorkflowDataAccess
                   isrollback = @IsRollback,
                   rollbackofworkflowhistoryid = @RollbackOfWorkflowHistoryId,
                   modifieddate = @ModifiedDate
-              WHERE id = @Id;", conn);
+              WHERE id = @Id;";
+
+    public bool UpdateWorkflow(int id, Workflow updatedWorkflow)
+    {
+        using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
+        conn.Open();
+
+        using var cmd = new NpgsqlCommand(UpdateWorkflowSql, conn);
 
         cmd.Parameters.AddWithValue("@Id", id);
         AddWorkflowParameters(cmd, updatedWorkflow);
 
         return cmd.ExecuteNonQuery() > 0;
     }
+
+    public async Task<bool> UpdateWorkflowAsync(int id, Workflow updatedWorkflow, CancellationToken ct = default) =>
+        await AdoAsync.ExecuteAsync(_dbConfig, UpdateWorkflowSql, cmd =>
+        {
+            cmd.Parameters.AddWithValue("@Id", id);
+            AddWorkflowParameters(cmd, updatedWorkflow);
+        }, ct) > 0;
 
     public bool DeleteWorkflow(int id)
     {

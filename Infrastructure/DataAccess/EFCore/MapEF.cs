@@ -81,4 +81,7 @@ public class MapEF : IMapDataAccess
         _context.SaveChanges();
         return true;
     }
+
+    // Not the configured provider: async siblings return the sync result, no real async I/O here.
+    public Task<Map?> GetMapByIdAsync(int id, CancellationToken ct = default) => Task.FromResult(GetMapById(id));
 }

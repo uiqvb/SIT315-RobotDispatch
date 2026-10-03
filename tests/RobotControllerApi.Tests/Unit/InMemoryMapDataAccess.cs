@@ -33,4 +33,7 @@ internal sealed class InMemoryMapDataAccess : IMapDataAccess
     }
 
     public bool DeleteMap(int id) => _maps.Remove(id);
+
+    // Not the configured provider: async siblings return the sync result, no real async I/O here.
+    public Task<Map?> GetMapByIdAsync(int id, CancellationToken ct = default) => Task.FromResult(GetMapById(id));
 }

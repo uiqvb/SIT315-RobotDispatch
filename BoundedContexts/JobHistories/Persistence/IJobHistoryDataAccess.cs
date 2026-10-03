@@ -14,4 +14,8 @@ public interface IJobHistoryDataAccess
     bool JobExists(int jobId);
     bool WorkflowExists(int workflowId);
     bool CommandCatalogueExists(int commandCatalogueId);
+
+    // Async siblings for the dispatch path; the sync versions above stay for other callers.
+    Task<JobHistory?> GetJobHistoryByIdAsync(int id, CancellationToken ct = default);
+    Task<JobHistory> InsertJobHistoryAsync(JobHistory newJobHistory, CancellationToken ct = default);
 }

@@ -10,4 +10,7 @@ public interface IDeviceDataAccess
     Device InsertDevice(Device newDevice);
     bool UpdateDevice(int id, Device updatedDevice);
     bool DeleteDevice(int id);
+
+    // Async siblings for the dispatch path; the sync versions above stay for other callers.
+    Task<Device?> GetDeviceByIdAsync(int id, CancellationToken ct = default);
 }

@@ -35,15 +35,17 @@ public class MapADO : IMapDataAccess
         return results;
     }
 
+    private const string GetMapByIdSql =
+        @"SELECT id, name, columns, rows, cellsizecm, description, isactive, createddate, modifieddate
+              FROM map
+              WHERE id = @id;";
+
     public Map? GetMapById(int id)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT id, name, columns, rows, cellsizecm, description, isactive, createddate, modifieddate
-              FROM map
-              WHERE id = @id;", conn);
+        using var cmd = new NpgsqlCommand(GetMapByIdSql, conn);
 
         cmd.Parameters.AddWithValue("@id", id);
 
@@ -56,6 +58,9 @@ public class MapADO : IMapDataAccess
 
         return null;
     }
+
+    public Task<Map?> GetMapByIdAsync(int id, CancellationToken ct = default) =>
+        AdoAsync.QuerySingleAsync(_dbConfig, GetMapByIdSql, cmd => cmd.Parameters.AddWithValue("@id", id), MapMap, ct);
 
     public bool MapExistsByName(string name, int? excludeId = null)
     {

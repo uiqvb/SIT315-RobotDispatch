@@ -23,13 +23,24 @@ public interface IJobDataAccess
     bool IsDeviceGridPoseTrustedAndAligned(int deviceId);
     bool DeviceCredentialOwnsDevice(int deviceCredentialId, int deviceId);
 
+    // Async siblings for the dispatch path; the sync versions above stay for admin and dashboard callers.
+    Task<Job?> GetJobByIdAsync(int id, CancellationToken ct = default);
+    Task<List<Job>> GetJobsByWorkflowIdAsync(int workflowId, CancellationToken ct = default);
+    Task<Job?> GetOldestQueuedJobByDeviceIdAsync(int deviceId, CancellationToken ct = default);
+    Task<bool> UpdateJobAsync(int id, Job updatedJob, CancellationToken ct = default);
+    Task<int?> GetDeviceMapIdAsync(int deviceId, CancellationToken ct = default);
+    Task<string?> GetCommandCatalogueNameByIdAsync(int commandCatalogueId, CancellationToken ct = default);
+    Task<CommandCatalogueSnapshot?> GetCommandCatalogueByIdAsync(int commandCatalogueId, CancellationToken ct = default);
+    Task<int?> GetCommandCatalogueIdByNameAsync(string commandName, CancellationToken ct = default);
+    Task<DeviceCapabilitySnapshot?> GetActiveDeviceCapabilityAsync(int deviceId, int commandCatalogueId, CancellationToken ct = default);
+
     // Guarded transitions: each only changes the row if it is still in the expected state, and returns null/false otherwise.
-    List<Job> GetStaleJobsByDeviceId(int deviceId, DateTime now);
-    List<Job> GetStaleJobs(DateTime now);
-    Job? TryClaimJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime leaseExpiresAtUtc);
-    bool TryUpdateQueuedJobStatus(int jobId, string newStatus, DateTime modifiedDate);
-    Job? TryMarkClaimedJobExecuting(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime modifiedDate);
-    Job? TryFinishClaimedJob(int jobId, int deviceCredentialId, DateTime claimedAtUtc, string[] fromStatuses, string newStatus, DateTime modifiedDate);
-    bool TryRequeueStaleClaimedJob(int jobId, DateTime? claimedAtUtc, DateTime now);
-    bool TryExpireStaleExecutingJob(int jobId, DateTime? claimedAtUtc, DateTime now);
+    Task<List<Job>> GetStaleJobsByDeviceIdAsync(int deviceId, DateTime now, CancellationToken ct = default);
+    Task<List<Job>> GetStaleJobsAsync(DateTime now, CancellationToken ct = default);
+    Task<Job?> TryClaimJobAsync(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime leaseExpiresAtUtc, CancellationToken ct = default);
+    Task<bool> TryUpdateQueuedJobStatusAsync(int jobId, string newStatus, DateTime modifiedDate, CancellationToken ct = default);
+    Task<Job?> TryMarkClaimedJobExecutingAsync(int jobId, int deviceCredentialId, DateTime claimedAtUtc, DateTime modifiedDate, CancellationToken ct = default);
+    Task<Job?> TryFinishClaimedJobAsync(int jobId, int deviceCredentialId, DateTime claimedAtUtc, string[] fromStatuses, string newStatus, DateTime modifiedDate, CancellationToken ct = default);
+    Task<bool> TryRequeueStaleClaimedJobAsync(int jobId, DateTime? claimedAtUtc, DateTime now, CancellationToken ct = default);
+    Task<bool> TryExpireStaleExecutingJobAsync(int jobId, DateTime? claimedAtUtc, DateTime now, CancellationToken ct = default);
 }

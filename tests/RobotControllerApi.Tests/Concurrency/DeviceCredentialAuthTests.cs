@@ -112,7 +112,7 @@ public class DeviceCredentialAuthTests : IAsyncLifetime
         var credentialId = await _db.InsertCredentialAsync(PostgresFixture.NanoDeviceId, "nano-a", "secret-a");
         await _db.ExecuteAsync("UPDATE public.devicecredential SET revokedatutc = @at WHERE id = @id;", ("at", DateTime.UtcNow), ("id", credentialId));
 
-        new DeviceCredentialADO(_db.DbConfig).UpdateDeviceCredentialLastUsed(credentialId, DateTime.UtcNow, "127.0.0.1", "test");
+        await new DeviceCredentialADO(_db.DbConfig).UpdateDeviceCredentialLastUsedAsync(credentialId, DateTime.UtcNow, "127.0.0.1", "test");
 
         (await _db.ScalarAsync<object>("SELECT revokedatutc FROM public.devicecredential WHERE id = @id;", ("id", credentialId))).Should().NotBe(DBNull.Value);
     }
@@ -132,12 +132,12 @@ public class DeviceCredentialAuthTests : IAsyncLifetime
         public NoFullScanCredentials(IDeviceCredentialDataAccess inner) => _inner = inner;
 
         public List<DeviceCredential> GetDeviceCredentials() => throw new InvalidOperationException("Authentication must not load every credential.");
-        public DeviceCredential? GetDeviceCredentialByCredentialIdentifier(string credentialIdentifier) => _inner.GetDeviceCredentialByCredentialIdentifier(credentialIdentifier);
+        public Task<DeviceCredential?> GetDeviceCredentialByCredentialIdentifierAsync(string credentialIdentifier, CancellationToken ct = default) => _inner.GetDeviceCredentialByCredentialIdentifierAsync(credentialIdentifier, ct);
 
-        public bool UpdateDeviceCredentialLastUsed(int id, DateTime lastUsedAtUtc, string? lastUsedIpAddress, string? lastUsedUserAgent)
+        public Task<bool> UpdateDeviceCredentialLastUsedAsync(int id, DateTime lastUsedAtUtc, string? lastUsedIpAddress, string? lastUsedUserAgent, CancellationToken ct = default)
         {
             LastUsedWrites++;
-            return _inner.UpdateDeviceCredentialLastUsed(id, lastUsedAtUtc, lastUsedIpAddress, lastUsedUserAgent);
+            return _inner.UpdateDeviceCredentialLastUsedAsync(id, lastUsedAtUtc, lastUsedIpAddress, lastUsedUserAgent, ct);
         }
 
         public DeviceCredential? GetDeviceCredentialById(int id) => _inner.GetDeviceCredentialById(id);

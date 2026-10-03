@@ -45,4 +45,8 @@ public class JobHistoryEF : EfDataAccessBase, IJobHistoryDataAccess
     public bool WorkflowExists(int workflowId) => Exists("SELECT EXISTS (SELECT 1 FROM public.workflow WHERE id = @id)", new[] { new NpgsqlParameter("@id", workflowId) });
 
     public bool CommandCatalogueExists(int commandCatalogueId) => Exists("SELECT EXISTS (SELECT 1 FROM public.commandcatalogue WHERE id = @id)", new[] { new NpgsqlParameter("@id", commandCatalogueId) });
+
+    // Not the configured provider: async siblings return the sync result, no real async I/O here.
+    public Task<JobHistory?> GetJobHistoryByIdAsync(int id, CancellationToken ct = default) => Task.FromResult(GetJobHistoryById(id));
+    public Task<JobHistory> InsertJobHistoryAsync(JobHistory newJobHistory, CancellationToken ct = default) => Task.FromResult(InsertJobHistory(newJobHistory));
 }

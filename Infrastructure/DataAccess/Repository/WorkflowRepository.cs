@@ -205,4 +205,8 @@ public class WorkflowRepository : IWorkflowDataAccess, IRepository
     {
         public bool Value { get; set; }
     }
+
+    // Not the configured provider: async siblings return the sync result, no real async I/O here.
+    public Task<Workflow?> GetWorkflowByIdAsync(int id, CancellationToken ct = default) => Task.FromResult(GetWorkflowById(id));
+    public Task<bool> UpdateWorkflowAsync(int id, Workflow updatedWorkflow, CancellationToken ct = default) => Task.FromResult(UpdateWorkflow(id, updatedWorkflow));
 }

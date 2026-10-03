@@ -35,15 +35,17 @@ public class DeviceADO : IDeviceDataAccess
         return results;
     }
 
+    private const string GetDeviceByIdSql =
+        @"SELECT id, name, deviceidentifier, devicetype, mapid, description, isactive, createddate, modifieddate
+              FROM public.device
+              WHERE id = @id;";
+
     public Device? GetDeviceById(int id)
     {
         using var conn = new NpgsqlConnection(_dbConfig.GetConnectionString());
         conn.Open();
 
-        using var cmd = new NpgsqlCommand(
-            @"SELECT id, name, deviceidentifier, devicetype, mapid, description, isactive, createddate, modifieddate
-              FROM public.device
-              WHERE id = @id;", conn);
+        using var cmd = new NpgsqlCommand(GetDeviceByIdSql, conn);
 
         cmd.Parameters.AddWithValue("id", id);
 
@@ -51,6 +53,9 @@ public class DeviceADO : IDeviceDataAccess
 
         return dr.Read() ? MapDevice(dr) : null;
     }
+
+    public Task<Device?> GetDeviceByIdAsync(int id, CancellationToken ct = default) =>
+        AdoAsync.QuerySingleAsync(_dbConfig, GetDeviceByIdSql, cmd => cmd.Parameters.AddWithValue("id", id), MapDevice, ct);
 
     public bool DeviceExistsByIdentifier(string deviceIdentifier, int? excludeId = null)
     {

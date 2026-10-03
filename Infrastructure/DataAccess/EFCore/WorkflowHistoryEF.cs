@@ -59,4 +59,8 @@ public class WorkflowHistoryEF : EfDataAccessBase, IWorkflowHistoryDataAccess
             "SELECT EXISTS (SELECT 1 FROM workflow WHERE id = @Id)",
             new[] { new NpgsqlParameter("@Id", workflowId) });
     }
+
+    // Not the configured provider: async siblings return the sync result, no real async I/O here.
+    public Task<List<WorkflowHistory>> GetWorkflowHistoriesByWorkflowIdAsync(int workflowId, CancellationToken ct = default) => Task.FromResult(GetWorkflowHistoriesByWorkflowId(workflowId));
+    public Task<WorkflowHistory> InsertWorkflowHistoryAsync(WorkflowHistory newWorkflowHistory, CancellationToken ct = default) => Task.FromResult(InsertWorkflowHistory(newWorkflowHistory));
 }
