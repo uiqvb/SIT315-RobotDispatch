@@ -86,4 +86,23 @@ public class DbConfigTests
         parsed.Database.Should().Be("explicit_db");
         parsed.Username.Should().Be("explicit_user");
     }
+
+    // Phase 4 F12: prepared statements are on unless switched off, and a value in the connection string wins.
+    [Fact]
+    public void GetConnectionString_TurnsOnPreparedStatementsByDefault()
+    {
+        var parsed = new NpgsqlConnectionStringBuilder(BuildWith(new()).GetConnectionString());
+
+        parsed.MaxAutoPrepare.Should().Be(64);
+    }
+
+    [Fact]
+    public void GetConnectionString_PreparedStatements_CanBeSwitchedOff_OrSetInTheConnectionString()
+    {
+        var off = BuildWith(new() { ["Database:MaxAutoPrepare"] = "0" });
+        var explicitValue = BuildWith(new() { ["ConnectionStrings:DefaultConnection"] = "Host=h;Database=d;Username=u;Max Auto Prepare=10" });
+
+        new NpgsqlConnectionStringBuilder(off.GetConnectionString()).MaxAutoPrepare.Should().Be(0);
+        new NpgsqlConnectionStringBuilder(explicitValue.GetConnectionString()).MaxAutoPrepare.Should().Be(10);
+    }
 }

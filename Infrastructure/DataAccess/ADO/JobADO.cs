@@ -132,36 +132,43 @@ public class JobADO : IJobDataAccess
         return dr.Read() ? MapJob(dr) : null;
     }
 
+    // F11: the front of each group comes off an index (oldest standalone job, next workflow step), then the older of the two wins.
     private const string GetOldestQueuedJobByDeviceIdSql =
-        @"SELECT j.id, j.deviceid, j.workflowid, j.stepnumber, j.commandcatalogueid, j.payloadjson, j.providertype, j.status, j.requestedbyappuserid, j.claimedbydevicecredentialid, j.claimedatutc, j.leaseexpiresatutc, j.isrollback, j.rollbackofjobhistoryid, j.createddate, j.modifieddate
-              FROM public.job j
-              LEFT JOIN public.workflow w ON w.id = j.workflowid
-              WHERE j.deviceid = @deviceId
-                AND j.status = 'Queued'
-                AND (
-                    j.workflowid IS NULL
-                    OR (
-                        w.status IN ('Queued', 'Claimed', 'Executing')
-                        AND j.stepnumber IS NOT NULL
-                        AND NOT EXISTS (
-                            SELECT 1
-                            FROM public.job earlier
-                            WHERE earlier.workflowid = j.workflowid
-                              AND earlier.stepnumber IS NOT NULL
-                              AND earlier.stepnumber < j.stepnumber
-                              AND (
-                                  (w.executionmode = 'AllOrNothing' AND earlier.status <> 'Completed')
-                                  OR (w.executionmode = 'BestEffort' AND earlier.status NOT IN ('Completed', 'Failed'))
-                              )
-                        )
-                    )
-                )
-              ORDER BY
-                COALESCE(w.createddate, j.createddate),
-                CASE WHEN j.workflowid IS NULL THEN 1 ELSE 0 END,
-                COALESCE(j.stepnumber, 0),
-                j.createddate,
-                j.id
+        @"SELECT id, deviceid, workflowid, stepnumber, commandcatalogueid, payloadjson, providertype, status, requestedbyappuserid, claimedbydevicecredentialid, claimedatutc, leaseexpiresatutc, isrollback, rollbackofjobhistoryid, createddate, modifieddate
+              FROM (
+                  (SELECT j.id, j.deviceid, j.workflowid, j.stepnumber, j.commandcatalogueid, j.payloadjson, j.providertype, j.status, j.requestedbyappuserid, j.claimedbydevicecredentialid, j.claimedatutc, j.leaseexpiresatutc, j.isrollback, j.rollbackofjobhistoryid, j.createddate, j.modifieddate,
+                          j.createddate AS queuedsince, 1 AS standalonelast
+                   FROM public.job j
+                   WHERE j.deviceid = @deviceId
+                     AND j.status = 'Queued'
+                     AND j.workflowid IS NULL
+                   ORDER BY j.createddate, COALESCE(j.stepnumber, 0), j.id
+                   LIMIT 1)
+                  UNION ALL
+                  (SELECT j.id, j.deviceid, j.workflowid, j.stepnumber, j.commandcatalogueid, j.payloadjson, j.providertype, j.status, j.requestedbyappuserid, j.claimedbydevicecredentialid, j.claimedatutc, j.leaseexpiresatutc, j.isrollback, j.rollbackofjobhistoryid, j.createddate, j.modifieddate,
+                          w.createddate AS queuedsince, 0 AS standalonelast
+                   FROM public.job j
+                   JOIN public.workflow w ON w.id = j.workflowid
+                   WHERE j.deviceid = @deviceId
+                     AND j.status = 'Queued'
+                     AND j.workflowid IS NOT NULL
+                     AND w.status IN ('Queued', 'Claimed', 'Executing')
+                     AND j.stepnumber IS NOT NULL
+                     AND NOT EXISTS (
+                         SELECT 1
+                         FROM public.job earlier
+                         WHERE earlier.workflowid = j.workflowid
+                           AND earlier.stepnumber IS NOT NULL
+                           AND earlier.stepnumber < j.stepnumber
+                           AND (
+                               (w.executionmode = 'AllOrNothing' AND earlier.status <> 'Completed')
+                               OR (w.executionmode = 'BestEffort' AND earlier.status NOT IN ('Completed', 'Failed'))
+                           )
+                     )
+                   ORDER BY w.createddate, j.stepnumber, j.createddate, j.id
+                   LIMIT 1)
+              ) candidate
+              ORDER BY queuedsince, standalonelast, COALESCE(stepnumber, 0), createddate, id
               LIMIT 1;";
 
     public Job? GetOldestQueuedJobByDeviceId(int deviceId)
