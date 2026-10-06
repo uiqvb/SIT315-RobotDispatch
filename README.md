@@ -24,7 +24,7 @@ The full write-up is [`report/M4T1D_report.pdf`](report/M4T1D_report.pdf).
 
 | Branch | What it holds |
 |---|---|
-| `new` (default) | the final SIT315 code |
+| `main` (default) and `new` | the final SIT315 code (the two are identical) |
 | `old` | the SIT331 code exactly as benchmarked |
 | `phase-1` to `phase-4` | the step by step changes, each built on the one before |
 | `loadgen` | the load generator, added between phase 3 and phase 4 |
