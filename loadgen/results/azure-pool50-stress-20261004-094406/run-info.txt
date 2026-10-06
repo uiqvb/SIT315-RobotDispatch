@@ -1,0 +1,5 @@
+started:      2026-10-04T09:48:02.5910784+00:00
+target:       http://10.10.1.100 (label new-2-replica)
+note:         Azure koreacentral, 2 x D2s_v4 behind Standard LB
+load machine: 828cd77d15d3, Debian GNU/Linux 12 (bookworm), 2 logical CPUs
+parameters:   robots=2000,5000 duration=30s warmup=5s backlog=200 jobs/robot repeats=1

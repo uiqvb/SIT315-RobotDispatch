@@ -1,0 +1,4 @@
+label,robots,duration_s,warmup_s,step,ok,fail,ok_rps,p50_ms,p75_ms,p95_ms,p99_ms,mean_ms,max_ms,status_codes,completed_incl_warmup,robots_drained,run_at_utc
+rehearsal-old,5,10,2,claim-next,1413,0,141.3,13.84,14.86,17.45,22,14.27,34.99,200=1413,1553,0,2026-10-03T10:54:56.1589140Z
+rehearsal-old,5,10,2,started,1413,0,141.3,6.57,7.13,8.16,9.22,6.7,13.25,204=1413,1553,0,2026-10-03T10:54:56.1589140Z
+rehearsal-old,5,10,2,completed,1413,0,141.3,12.86,13.64,15.26,17.52,13.05,32.72,204=1413,1553,0,2026-10-03T10:54:56.1589140Z

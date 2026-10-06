@@ -1,0 +1,100 @@
+Warning: Permanently added '10.10.1.5' (ED25519) to the list of known hosts.
+Warning: Permanently added '10.10.1.6' (ED25519) to the list of known hosts.
+started (UTC): 2026-10-04T03:36:19+00:00
+region: koreacentral (Azure for Students)
+load VM Standard_D2ds_v4: vm-load: 2 vCPU, 7.8 GB, Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz
+API VM Standard_D2s_v4 10.10.1.5: vm-api-1: 2 vCPU, 7.8 GB, Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz
+API VM Standard_D2s_v4 10.10.1.6: vm-api-2: 2 vCPU, 7.8 GB, Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz
+database: Azure Database for PostgreSQL Flexible Server 18, Standard_D8ds_v5, 8 vCore, 128 GB, private subnet, TLS off, Maximum Pool Size=25 per replica
+load balancer: Azure Standard internal LB 10.10.1.100:80 to :8080, HTTP probe /health every 5 s
+images: robot-api:old = sit315 9faf8b1, robot-api:new = phase-4 a87f92d, robot-loadgen = phase-4 a87f92d
+parameters: setups old/1 new/1 new/2 old/2, robots 10,100,400, duration 30 s, warm-up 5 s, backlog 2000 jobs/robot, 3 repeats
+=== 03:36:21 setup old with 1 replica(s) ===
+vm-api-1: old healthy after 2s
+vm-api-2: stopped
+DB check old-1-replica/10: completed 5424, failed 0, claimed 0, executing 0, queued 14576, other 0, history rows 5424
+DB check old-1-replica/100: completed 8527, failed 0, claimed 0, executing 0, queued 191473, other 0, history rows 8527
+DB check old-1-replica/400: completed 5164, failed 0, claimed 0, executing 0, queued 794836, other 0, history rows 5164
+DB check old-1-replica/10: completed 6227, failed 0, claimed 0, executing 0, queued 13773, other 0, history rows 6227
+DB check old-1-replica/100: completed 7784, failed 0, claimed 0, executing 0, queued 192216, other 0, history rows 7784
+DB check old-1-replica/400: completed 6945, failed 0, claimed 6, executing 5, queued 793044, other 0, history rows 6945
+DB check old-1-replica/10: completed 6262, failed 0, claimed 0, executing 0, queued 13738, other 0, history rows 6262
+DB check old-1-replica/100: completed 8639, failed 0, claimed 0, executing 0, queued 191361, other 0, history rows 8639
+DB check old-1-replica/400: completed 6194, failed 0, claimed 0, executing 0, queued 793806, other 0, history rows 6194
+=== 03:44:00 setup new with 1 replica(s) ===
+vm-api-1: new healthy after 2s
+vm-api-2: stopped
+DB check new-1-replica/10: completed 11354, failed 0, claimed 0, executing 0, queued 8646, other 0, history rows 11354
+DB check new-1-replica/100: completed 21436, failed 0, claimed 0, executing 0, queued 178564, other 0, history rows 21436
+DB check new-1-replica/400: completed 21344, failed 0, claimed 0, executing 0, queued 778656, other 0, history rows 21344
+DB check new-1-replica/10: completed 11799, failed 0, claimed 0, executing 0, queued 8201, other 0, history rows 11799
+DB check new-1-replica/100: completed 21619, failed 0, claimed 0, executing 0, queued 178381, other 0, history rows 21619
+DB check new-1-replica/400: completed 21477, failed 0, claimed 0, executing 0, queued 778523, other 0, history rows 21477
+DB check new-1-replica/10: completed 11732, failed 0, claimed 0, executing 0, queued 8268, other 0, history rows 11732
+DB check new-1-replica/100: completed 21466, failed 0, claimed 0, executing 0, queued 178534, other 0, history rows 21466
+DB check new-1-replica/400: completed 21234, failed 0, claimed 0, executing 0, queued 778766, other 0, history rows 21234
+=== 03:51:40 setup new with 2 replica(s) ===
+vm-api-1: new healthy after 2s
+vm-api-2: new healthy after 2s
+DB check new-2-replica/10: completed 11118, failed 0, claimed 0, executing 0, queued 8882, other 0, history rows 11118
+DB check new-2-replica/100: completed 36372, failed 0, claimed 0, executing 0, queued 163628, other 0, history rows 36372
+DB check new-2-replica/400: completed 37386, failed 0, claimed 0, executing 0, queued 762614, other 0, history rows 37386
+DB check new-2-replica/10: completed 11417, failed 0, claimed 0, executing 0, queued 8583, other 0, history rows 11417
+DB check new-2-replica/100: completed 38326, failed 0, claimed 0, executing 0, queued 161674, other 0, history rows 38326
+DB check new-2-replica/400: completed 38121, failed 0, claimed 0, executing 0, queued 761879, other 0, history rows 38121
+DB check new-2-replica/10: completed 11539, failed 0, claimed 0, executing 0, queued 8461, other 0, history rows 11539
+DB check new-2-replica/100: completed 38488, failed 0, claimed 0, executing 0, queued 161512, other 0, history rows 38488
+DB check new-2-replica/400: completed 37666, failed 0, claimed 0, executing 0, queued 762334, other 0, history rows 37666
+=== 03:59:20 setup old with 2 replica(s) ===
+vm-api-1: old healthy after 2s
+vm-api-2: old healthy after 2s
+DB check old-2-replica/10: completed 4803, failed 0, claimed 0, executing 0, queued 15197, other 0, history rows 4803
+DB check old-2-replica/100: completed 11968, failed 0, claimed 0, executing 0, queued 188032, other 0, history rows 11968
+DB check old-2-replica/400: completed 9882, failed 0, claimed 0, executing 0, queued 790118, other 0, history rows 9882
+DB check old-2-replica/10: completed 5862, failed 0, claimed 0, executing 0, queued 14138, other 0, history rows 5862
+DB check old-2-replica/100: completed 12705, failed 0, claimed 0, executing 0, queued 187295, other 0, history rows 12705
+DB check old-2-replica/400: completed 7425, failed 0, claimed 0, executing 0, queued 792575, other 0, history rows 7425
+DB check old-2-replica/10: completed 6115, failed 0, claimed 0, executing 0, queued 13885, other 0, history rows 6115
+DB check old-2-replica/100: completed 12146, failed 0, claimed 0, executing 0, queued 187854, other 0, history rows 12146
+DB check old-2-replica/400: completed 9428, failed 0, claimed 0, executing 0, queued 790572, other 0, history rows 9428
+
+robots version   jobs/s   claim p50/p95/p99 ms started p95 completed p95   429s other fails drained db completed db failed in flight
+    10 old-1-replica   172.53       23.87/33.89/50.5       21.74         29.39      0           0       0         5424         0         0
+    10 old-1-replica   179.67      24.42/30.16/33.66       13.75         24.75      0           0       0         6227         0         0
+    10 old-1-replica   180.67      23.97/30.46/35.23       14.01         24.58      0           0       0         6262         0         0
+    10 new-1-replica   342.37         9.5/12.02/14.5        7.17         16.16      0           0       0        11354         0         0
+    10 new-1-replica   341.47       9.82/12.06/14.43        6.97         16.18      0           0       0        11799         0         0
+    10 new-1-replica   338.33       9.68/11.61/14.06        7.14         16.38      0           0       0        11732         0         0
+    10 new-2-replica   334.93       9.86/12.25/14.55        7.26         16.37      0           0       0        11118         0         0
+    10 new-2-replica   328.23       10.15/12.47/15.5        7.25         16.64      0           0       0        11417         0         0
+    10 new-2-replica   332.23       9.91/12.25/15.05         7.3         16.46      0           0       0        11539         0         0
+    10 old-2-replica   152.17      26.48/38.02/51.23       22.88          34.4      0           0       0         4803         0         0
+    10 old-2-replica   168.67      25.71/32.14/36.32        14.5         26.43      0           0       0         5862         0         0
+    10 old-2-replica   176.17      23.44/30.35/34.75       15.09          27.1      0           0       0         6115         0         0
+   100 old-1-replica   246.13   131.46/217.73/271.62      195.97        211.07      0           0       0         8527         0         0
+   100 old-1-replica   225.97   142.85/227.97/267.26      205.95        225.92      0           0       0         7784         0         0
+   100 old-1-replica   250.37    132.48/211.2/240.77       186.5        204.54      0           0       0         8639         0         0
+   100 new-1-replica   615.97      59.01/66.37/86.91       40.06         67.46    120           0       0        21436         0         0
+   100 new-1-replica    618.5      58.88/67.01/86.85       40.06         67.58    120           0       0        21619         0         0
+   100 new-1-replica   617.87      58.72/66.88/86.78       40.38          67.9    120           0       0        21466         0         0
+   100 new-2-replica   1077.9      35.01/44.77/65.73       20.98         48.38      0           0       0        36372         0         0
+   100 new-2-replica  1103.17      35.07/41.89/49.66       19.79         45.18      0           0       0        38326         0         0
+   100 new-2-replica  1102.87      33.31/47.68/60.83       21.06         50.11      0           0       0        38488         0         0
+   100 old-2-replica   355.03    86.34/200.83/266.24      178.94        194.69      0           0       0        11968         0         0
+   100 old-2-replica   375.87    86.34/171.26/225.28      147.71         163.2      0           0       0        12705         0         0
+   100 old-2-replica   363.87    91.71/154.24/192.38      137.98        150.14      0           0       0        12146         0         0
+   400 old-1-replica   152.83 942.08/1801.22/2016.26     1631.23       1370.11      0           0       0         5164         0         0
+   400 old-1-replica    192.4 757.76/1136.64/1377.28     1038.85       1073.15      0          12       0         6945         0        11
+   400 old-1-replica   176.73 766.46/1330.18/1603.58     1137.66       1158.14      0           0       0         6194         0         0
+   400 new-1-replica   607.67      59.39/67.14/84.93       40.54         67.97   9120           0       0        21344         0         0
+   400 new-1-replica   608.43      59.46/67.01/84.93       40.19         67.71   9120           0       0        21477         0         0
+   400 new-1-replica   602.17      59.84/68.99/92.61       41.95         70.14   9120           0       0        21234         0         0
+   400 new-2-replica  1067.67      65.44/79.68/93.38       46.88         81.34   6337           0       0        37386         0         0
+   400 new-2-replica  1082.17      66.18/79.94/90.37       47.84         81.22   6248           0       0        38121         0         0
+   400 new-2-replica     1069      58.5/80.77/101.12       48.32          82.3   6747           0       0        37666         0         0
+   400 old-2-replica   290.17  453.63/777.22/1332.22      669.18        695.81      0           0       0         9882         0         0
+   400 old-2-replica   231.57 437.76/1380.35/3911.68     1154.05       1192.96      0           0       0         7425         0         0
+   400 old-2-replica    284.2  468.22/939.01/1186.82      742.91        785.92      0           0       0         9428         0         0
+
+jobs/s = completed per second (warm-up excluded). db completed includes warm-up. in flight = Claimed + Executing when the run stopped.
+=== 04:07:01 GRID DONE: /home/azureuser/results/grid-20261004-033619 ===

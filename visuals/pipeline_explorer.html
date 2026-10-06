@@ -1,0 +1,1008 @@
+<title>Robot Job Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a control bar, the request lane (robot -> database), then three reading panels and the step list. */
+:root{
+  --bg:#f3f5f7; --panel:#ffffff; --ink:#18212b; --muted:#5d6b78; --line:#d5dce3; --soft:#e9eef2;
+  --old:#c2410c; --old-soft:#fdeee6; --new:#0f766e; --new-soft:#e2f4f1;
+  --wait:#b45309; --free:#047857; --code-bg:#f7f9fb; --hl:#fff3c4; --hl-ink:#3d2f00;
+  --db:#4338ca; --db-soft:#ecebfd;
+  --f-display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body:"Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --f-mono:"JetBrains Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#11161c; --panel:#1a2129; --ink:#e6edf3; --muted:#9aa8b5; --line:#2c3640; --soft:#222b34;
+  --old:#fb8c5a; --old-soft:#3a2219; --new:#4fd1c0; --new-soft:#15302d;
+  --wait:#f2b450; --free:#5ee0a8; --code-bg:#141a20; --hl:#4a3d10; --hl-ink:#fff1c2;
+  --db:#a5a1ff; --db-soft:#24224a; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --bg:#11161c; --panel:#1a2129; --ink:#e6edf3; --muted:#9aa8b5; --line:#2c3640; --soft:#222b34;
+  --old:#fb8c5a; --old-soft:#3a2219; --new:#4fd1c0; --new-soft:#15302d;
+  --wait:#f2b450; --free:#5ee0a8; --code-bg:#141a20; --hl:#4a3d10; --hl-ink:#fff1c2;
+  --db:#a5a1ff; --db-soft:#24224a; color-scheme:dark }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5}
+.wrap{max-width:1280px;margin:0 auto;padding-inline:16px;padding-block:20px 48px;display:flex;flex-direction:column;gap:16px}
+h1{font-family:var(--f-display);font-weight:800;font-size:clamp(24px,3.2vw,34px);margin:0;letter-spacing:-.01em;text-wrap:balance}
+.intro{color:var(--muted);margin:4px 0 0;max-width:72ch}
+.mode-old{--mode:var(--old);--mode-soft:var(--old-soft)}
+.mode-new{--mode:var(--new);--mode-soft:var(--new-soft)}
+
+/* controls */
+.bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;color:var(--ink);font:inherit;font-size:14px;padding:7px 12px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--mode);color:var(--panel);font-weight:700}
+.seg.req button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
+.btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;font-size:14px;padding:7px 12px;border-radius:8px;cursor:pointer}
+.btn.primary{background:var(--mode);border-color:var(--mode);color:var(--panel);font-weight:700;min-width:86px}
+button:focus-visible{outline:3px solid var(--db);outline-offset:2px}
+.spacer{flex:1}
+.label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+select{font:inherit;font-size:14px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+
+/* tally */
+.tally{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.tile b{font-family:var(--f-display);font-size:22px;font-variant-numeric:tabular-nums}
+.tile .o{color:var(--old)} .tile .n{color:var(--new)}
+.tile p{margin:2px 0 0;color:var(--muted);font-size:13px}
+
+/* lane */
+.lane-scroll{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.lane{position:relative;min-width:860px;padding:64px 16px 16px}
+.nodes{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;position:relative;z-index:1}
+.node{border:2px solid var(--line);border-radius:10px;background:var(--bg);padding:10px 8px;text-align:center;min-height:86px;display:flex;flex-direction:column;justify-content:center;gap:2px;transition:border-color .25s, background .25s}
+.node .t{font-weight:700;font-size:14px}
+.node .s{font-size:12px;color:var(--muted)}
+.node.on{border-color:var(--mode);background:var(--mode-soft)}
+.node.off{opacity:.45;border-style:dashed}
+.node.dbnode{border-color:var(--db)}
+.node.dbnode.on{background:var(--db-soft)}
+.wire{position:absolute;left:16px;right:16px;top:107px;height:2px;background:var(--line);z-index:0}
+.packet{position:absolute;top:10px;left:0;z-index:3;transform:translateX(-50%);transition:left .7s cubic-bezier(.5,0,.2,1);background:var(--mode);color:var(--panel);font-family:var(--f-mono);font-size:12px;font-weight:600;padding:6px 10px;border-radius:7px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.18)}
+.packet.reply{background:var(--ink)}
+.packet::after{content:"";position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);border:6px solid transparent;border-bottom:0;border-top-color:inherit}
+.packet::after{border-top-color:var(--mode)}
+.packet.reply::after{border-top-color:var(--ink)}
+.query{position:absolute;top:120px;z-index:2;background:var(--db);color:var(--panel);font-family:var(--f-mono);font-size:11px;padding:3px 8px;border-radius:20px;opacity:0;transform:translateX(-50%);white-space:nowrap}
+.query.go{animation:q 1.6s ease-in-out forwards}
+@keyframes q{0%{opacity:0;left:var(--from)}10%{opacity:1;left:var(--from)}45%{left:var(--to);opacity:1}55%{left:var(--to);opacity:1}90%{left:var(--from);opacity:1}100%{left:var(--from);opacity:0}}
+.threadrow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px;font-size:13px}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:20px;padding:3px 10px;font-weight:700;font-size:12px;border:1px solid currentColor}
+.pill.work{color:var(--mode)} .pill.wait{color:var(--wait)} .pill.free{color:var(--free)} .pill.none{color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+
+/* panels */
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr) minmax(0,1fr);gap:12px;align-items:start}
+@media (max-width:1000px){.grid{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.panel h2{font-family:var(--f-display);font-size:16px;font-weight:600;margin:0 0 8px;display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.panel h2 small{font-family:var(--f-body);font-size:12px;color:var(--muted);font-weight:400}
+.msg{font-family:var(--f-mono);font-size:12.5px;line-height:1.6;background:var(--code-bg);border:1px solid var(--line);border-radius:8px;padding:10px;overflow-x:auto;white-space:pre}
+.msg .k{color:var(--muted)}
+.msg .h{background:var(--hl);color:var(--hl-ink);border-radius:3px;padding:0 2px}
+.msg .sec{color:var(--mode);font-weight:600}
+.msg .badge{color:var(--free);font-weight:600}
+.code{font-family:var(--f-mono);font-size:12.5px;line-height:1.55;background:var(--code-bg);border:1px solid var(--line);border-radius:8px;overflow-x:auto}
+.code .file{font-size:11px;color:var(--muted);padding:6px 10px;border-bottom:1px solid var(--line);font-family:var(--f-body)}
+.code pre{margin:0;padding:8px 0}
+.code .ln{display:block;padding:0 10px;white-space:pre}
+.code .ln.h{background:var(--hl);color:var(--hl-ink)}
+.sql{margin-top:8px}
+.sql .file{color:var(--db)}
+.plain{font-size:15.5px;margin:0 0 10px}
+.title{font-family:var(--f-display);font-weight:800;font-size:20px;margin:0 0 6px;text-wrap:balance}
+.stepno{font-size:12px;color:var(--muted)}
+.codeword{font-size:12.5px;color:var(--muted);margin:0 0 10px}
+.codeword code{font-family:var(--f-mono);font-size:12px;background:var(--soft);padding:1px 5px;border-radius:4px}
+.box{border-radius:8px;padding:8px 10px;font-size:14px;margin-top:10px}
+.box .label{display:block;margin-bottom:2px}
+.box.diff{background:var(--soft);border-left:4px solid var(--mode)}
+.box.dbbox{background:var(--db-soft);border-left:4px solid var(--db)}
+.box.race{background:var(--mode-soft)}
+.race table{border-collapse:collapse;font-size:12.5px;width:100%;margin-top:4px}
+.race td,.race th{border-bottom:1px solid var(--line);padding:3px 4px;text-align:left;vertical-align:top}
+.race th{font-size:11px;color:var(--muted);font-weight:400;text-transform:uppercase;letter-spacing:.06em}
+.race .bad{color:var(--old);font-weight:700} .race .good{color:var(--new);font-weight:700}
+
+/* steps list */
+.steps{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}
+.steps button{display:flex;gap:10px;align-items:baseline;width:100%;text-align:left;border:1px solid transparent;background:transparent;color:var(--ink);font:inherit;font-size:14px;padding:6px 8px;border-radius:7px;cursor:pointer}
+.steps button:hover{background:var(--soft)}
+.steps button[aria-current="step"]{border-color:var(--mode);background:var(--mode-soft)}
+.steps .n{font-family:var(--f-mono);font-size:12px;color:var(--muted);min-width:20px;font-variant-numeric:tabular-nums}
+.steps .where{font-size:11px;color:var(--muted);margin-left:auto;white-space:nowrap}
+.chg{font-size:10px;font-weight:700;color:var(--mode);border:1px solid var(--mode);border-radius:4px;padding:0 4px;white-space:nowrap}
+.dbn{font-size:10px;font-weight:700;color:var(--db);white-space:nowrap}
+.foot{color:var(--muted);font-size:13px}
+@media (prefers-reduced-motion: reduce){.packet{transition:none}.query.go{animation:none}}
+</style>
+
+<div class="wrap mode-old" id="app">
+  <header>
+    <h1>Robot Job Pipeline</h1>
+    <p class="intro">One robot doing one job takes three requests: ask for work, say "started", say "done". Pick old (the SIT331 code) or new (after the SIT315 changes), then step through everything the server does with each request. Every code box is copied from the real files.</p>
+  </header>
+
+  <div class="bar" role="toolbar" aria-label="Controls">
+    <div class="seg" id="modeSeg" aria-label="Code version">
+      <button id="mOld" aria-pressed="true">Old code</button>
+      <button id="mNew" aria-pressed="false">New code</button>
+    </div>
+    <div class="seg req" id="reqSeg" aria-label="Request">
+      <button data-r="0" aria-pressed="true">1 · Claim next job</button>
+      <button data-r="1" aria-pressed="false">2 · Started</button>
+      <button data-r="2" aria-pressed="false">3 · Completed</button>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn" id="prev" aria-label="Previous step">◀ Back</button>
+    <button class="btn primary" id="play">▶ Play</button>
+    <button class="btn" id="next" aria-label="Next step">Next ▶</button>
+    <label class="label" for="speed">Speed</label>
+    <select id="speed"><option value="4200">Slow</option><option value="2800" selected>Normal</option><option value="1700">Fast</option></select>
+  </div>
+
+  <div class="tally" id="tally"></div>
+
+  <div class="lane-scroll">
+    <div class="lane" id="lane">
+      <div class="wire"></div>
+      <div class="packet" id="packet">POST claim-next</div>
+      <div class="query" id="query">SQL</div>
+      <div class="nodes" id="nodes"></div>
+      <div class="threadrow" id="threadrow"></div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <section class="panel" aria-labelledby="msgH">
+      <h2 id="msgH">The message <small id="msgSub">what the robot sent</small></h2>
+      <div class="msg" id="msg"></div>
+      <div class="foot" style="margin-top:8px">Yellow = the part this step is using. Example values; real field names.</div>
+    </section>
+    <section class="panel" aria-labelledby="codeH">
+      <h2 id="codeH">The code running now <small id="codeSub"></small></h2>
+      <div id="code"></div>
+    </section>
+    <section class="panel" aria-labelledby="wordsH">
+      <h2 id="wordsH">In plain words <small id="stepNo"></small></h2>
+      <div id="words"></div>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="stepsH">
+    <h2 id="stepsH">All steps in this request <small><span class="chg">CHANGED</span> = different in old and new</small></h2>
+    <ol class="steps" id="steps"></ol>
+  </section>
+
+  <p class="foot">Database trips are counted from the code for the benchmark's job: a single MOVE on robot 1007, not part of a workflow. The new total of 25 trips per job matches the 25 database connection openings per job measured in the Phase 4 profile. Row counts are for the Azure test: 400 robots, 2,000 queued jobs each.</p>
+</div>
+
+<script>
+const STATIONS=[
+  {id:"robot",t:"Robot",s:"robot 1007"},
+  {id:"lb",t:"Load balancer",s:"splits traffic"},
+  {id:"gate",t:"Door limit",s:"64 inside, 32 waiting"},
+  {id:"auth",t:"Login check",s:"who is this?"},
+  {id:"ctrl",t:"Controller",s:"picks the method"},
+  {id:"svc",t:"Service",s:"does the work"},
+  {id:"db",t:"PostgreSQL",s:"shared database"}
+];
+
+// ---------- messages ----------
+const HDR=[["X-Device-Credential-Id","bench-cred-1007"],["X-Device-Credential-Secret","rc_bench_1007_loadgen_secret"]];
+const MSG={
+  old:[
+    {req:{m:"POST",p:"/api/adapter/devices/1007/work-items/claim-next",body:[["leaseMinutes","5"]]},
+     res:{code:"200 OK",body:[["workItemType",'"Job"'],["job.id","48213"],["job.status",'"Claimed"'],["job.claimedAtUtc",'"2026-10-04T04:09:41.512Z"'],["job.leaseExpiresAtUtc",'"2026-10-04T04:14:41.512Z"'],["inverseCommandName",'"STEP_BACK"']]}},
+    {req:{m:"PATCH",p:"/api/adapter/jobs/48213/started",body:null},res:{code:"204 No Content",body:[]}},
+    {req:{m:"PATCH",p:"/api/adapter/jobs/48213/completed",body:[["resultJson",'"{}"']]},res:{code:"204 No Content",body:[]}}
+  ],
+  new:[
+    {req:{m:"POST",p:"/api/adapter/devices/1007/work-items/claim-next",body:[["leaseMinutes","5"]]},
+     res:{code:"200 OK",body:[["workItemType",'"Job"'],["job.id","48213"],["job.status",'"Claimed"'],["job.claimedAtUtc",'"2026-10-04T04:09:41.512Z"'],["job.leaseExpiresAtUtc",'"2026-10-04T04:14:41.512Z"'],["inverseCommandName",'"STEP_BACK"']]}},
+    {req:{m:"PATCH",p:"/api/adapter/jobs/48213/started",body:[["claimedAtUtc",'"2026-10-04T04:09:41.512Z"']]},res:{code:"204 No Content",body:[]}},
+    {req:{m:"PATCH",p:"/api/adapter/jobs/48213/completed",body:[["claimedAtUtc",'"2026-10-04T04:09:41.512Z"'],["resultJson",'"{}"']]},res:{code:"204 No Content",body:[]}}
+  ]
+};
+
+// ---------- code chunks (copied from the files) ----------
+const F={
+  scen:"loadgen/RobotLoadGen/RobotScenario.cs",
+  prog:"Program.cs",
+  bp:"Infrastructure/DispatchBackpressure.cs",
+  auth:"BoundedContexts/Auth/Handlers/DeviceCredentialAuthenticationHandler.cs",
+  wdc:"BoundedContexts/Jobs/Controllers/WorkDispatchController.cs",
+  jc:"BoundedContexts/Jobs/Controllers/JobsController.cs",
+  wds:"BoundedContexts/Jobs/Services/WorkDispatchService.cs",
+  js:"BoundedContexts/Jobs/Services/JobService.cs",
+  ja:"Infrastructure/DataAccess/ADO/JobADO.cs",
+  dca:"Infrastructure/DataAccess/ADO/DeviceCredentialADO.cs",
+  dbc:"Infrastructure/DataAccess/DbConfig.cs"
+};
+const C={
+robotSend:{f:F.scen,c:`var request = new HttpRequestMessage(method, path) { Content = JsonContent.Create(body) };
+request.Headers.Add("X-Device-Credential-Id", BenchDatabase.CredentialIdentifier(deviceId));
+request.Headers.Add("X-Device-Credential-Secret", BenchDatabase.Secret(deviceId));`,h:[1,2]},
+lb:{f:"Azure: lb-bench (no code of yours runs here)",c:`frontend   10.10.1.100 : 80
+rule       port 80  ->  port 8080 on each server
+backend    vm-api-1 (10.10.1.5)
+           vm-api-2 (10.10.1.6)
+health     GET /health every 5 s; a server that stops answering gets no new connections`,h:[1,2,3]},
+progOld:{f:F.prog+" (old)",c:`app.UseSpectreRequestLogging();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();`,h:[1]},
+progNew:{f:F.prog+" (new)",c:`app.UseSpectreRequestLogging();
+app.UseRateLimiter();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();`,h:[1]},
+bp:{f:F.bp,c:`options.AddConcurrencyLimiter(PolicyName, limiter =>
+{
+    limiter.PermitLimit = permitLimit; //requests allowed to run at the same time
+    limiter.QueueLimit = queueLimit; //requests allowed to wait for a permit
+    limiter.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+});
+
+options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+options.OnRejected = (context, _) =>
+{
+    context.HttpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString();`,h:[2,3,7,10]},
+authHdr:{f:F.auth,c:`if (!Request.Headers.TryGetValue(CredentialIdHeader, out var credentialIdentifierValues)
+    || !Request.Headers.TryGetValue(CredentialSecretHeader, out var secretValues))
+{
+    return FailAuthentication();
+}
+
+var credentialIdentifier = credentialIdentifierValues.ToString().Trim();
+var rawSecret = secretValues.ToString();`,h:[0,1,6,7]},
+authLoadOld:{f:F.auth+" (old)",c:`var credential = _credentials.GetDeviceCredentials()
+    .FirstOrDefault(x => string.Equals(x.CredentialIdentifier, credentialIdentifier, StringComparison.OrdinalIgnoreCase));
+
+if (credential == null)
+{
+    return FailAuthentication();
+}`,h:[0,1],
+ sql:{f:F.dca+" (old)",c:`SELECT id, deviceid, name, credentialidentifier, secretkeyprefix, secrethash, ...
+  FROM public.devicecredential
+  ORDER BY id;`,h:[1,2]}},
+authLoadNew:{f:F.auth+" (new)",c:`var credential = await _credentials.GetDeviceCredentialByCredentialIdentifierAsync(credentialIdentifier, ct);
+
+if (credential == null)
+{
+    return FailAuthentication();
+}`,h:[0],
+ sql:{f:F.dca+" (new)",c:`SELECT id, deviceid, name, credentialidentifier, secretkeyprefix, secrethash, ...
+  FROM public.devicecredential
+  WHERE lower(credentialidentifier) = lower(@credentialIdentifier)`,h:[2]}},
+authChecks:{f:F.auth,c:`if (!credential.IsActive || credential.RevokedAtUtc.HasValue)
+{
+    return FailAuthentication();
+}
+
+if (credential.ExpiresAtUtc.HasValue && credential.ExpiresAtUtc.Value <= DateTime.UtcNow)
+{
+    return FailAuthentication();
+}
+
+if (!_secretHasher.VerifySecret(rawSecret, credential.SecretHash, credential.HashAlgorithm))
+{
+    return FailAuthentication();
+}`,h:[0,5,10]},
+authDevOld:{f:F.auth+" (old)",c:`var device = _devices.GetDeviceById(credential.DeviceId);
+
+if (device == null || !device.IsActive)
+{
+    return FailAuthentication();
+}
+
+if (RouteHasDeviceId(out var routeDeviceId) && routeDeviceId != credential.DeviceId)
+{
+    return FailAuthentication();
+}`,h:[0,7]},
+authDevNew:{f:F.auth+" (new)",c:`var device = await _devices.GetDeviceByIdAsync(credential.DeviceId, ct);
+
+if (device == null || !device.IsActive)
+{
+    return FailAuthentication();
+}
+
+if (RouteHasDeviceId(out var routeDeviceId) && routeDeviceId != credential.DeviceId)
+{
+    return FailAuthentication();
+}`,h:[0,7]},
+lastOld:{f:F.auth+" (old)",c:`try
+{
+    credential.LastUsedAtUtc = DateTime.UtcNow;
+    credential.LastUsedIpAddress = Context.Connection.RemoteIpAddress?.ToString();
+    credential.LastUsedUserAgent = Request.Headers.UserAgent.ToString();
+    credential.ModifiedDate = DateTime.UtcNow;
+    _credentials.UpdateDeviceCredential(credential.Id, credential);
+}`,h:[2,6]},
+lastNew:{f:F.auth+" (new)",c:`await PersistLastUsedIfDueAsync(credential, ct);
+...
+private async Task PersistLastUsedIfDueAsync(DeviceCredential credential, CancellationToken ct)
+{
+    var now = DateTime.UtcNow;
+    var intervalMinutes = ... ? parsed : 10;
+
+    if (credential.LastUsedAtUtc.HasValue && now - credential.LastUsedAtUtc.Value < TimeSpan.FromMinutes(intervalMinutes))
+    {
+        return;
+    }
+
+    try
+    {
+        await _credentials.UpdateDeviceCredentialLastUsedAsync( //writes only the three usage columns`,h:[0,7,9]},
+claims:{f:F.auth,c:`var claims = new List<Claim>
+{
+    new(ClaimTypes.NameIdentifier, credential.Id.ToString()),
+    new(AuthClaimTypes.ActorType, AuthClaimTypes.DeviceAdapterActor),
+    new(AuthClaimTypes.DeviceCredentialId, credential.Id.ToString()),
+    new(AuthClaimTypes.DeviceId, credential.DeviceId.ToString()),
+    new(AuthClaimTypes.CredentialIdentifier, credential.CredentialIdentifier),
+    new(ClaimTypes.Name, credential.Name)
+};`,h:[4,5]},
+ctrlClaimOld:{f:F.wdc+" (old)",c:`[HttpPost("claim-next")]
+public ActionResult ClaimNext(int deviceId, ClaimJobRequest request)
+{
+    try
+    {
+        var deviceCredentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
+        var response = _service.ClaimNextWorkItem(deviceId, request, deviceCredentialId);
+        if (response == null) return NoContent();
+        return Ok(response);
+    }`,h:[1,5,6]},
+ctrlClaimNew:{f:F.wdc+" (new)",c:`[HttpPost("claim-next")]
+[EnableRateLimiting(DispatchBackpressure.PolicyName)]
+public async Task<ActionResult> ClaimNext(int deviceId, ClaimJobRequest request, CancellationToken ct)
+{
+    try
+    {
+        var deviceCredentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
+        var authenticatedDeviceId = _currentUserAccessor.GetRequiredDeviceId(User);
+        var response = await _service.ClaimNextWorkItemAsync(deviceId, request, deviceCredentialId, authenticatedDeviceId, ct);
+        if (response == null) return NoContent();
+        return Ok(response);
+    }`,h:[1,2,6,7,8]},
+ownOld:{f:F.wds+" (old)",c:`if (deviceId <= 0) throw new ArgumentException("DeviceId is required.");
+if (deviceCredentialId <= 0) throw new ArgumentException("DeviceCredentialId is required.");
+if (!_jobDataAccess.DeviceCredentialOwnsDevice(deviceCredentialId, deviceId)) throw new InvalidOperationException("DeviceCredential does not own the route device.");`,h:[2],
+ sql:{f:F.ja+" (old)",c:`SELECT EXISTS (
+    SELECT 1
+    FROM public.devicecredential dc
+    JOIN public.device d ON d.id = dc.deviceid
+    WHERE dc.id = @deviceCredentialId
+      AND dc.deviceid = @deviceId
+      AND dc.isactive = true ...`,h:[2,3]}},
+ownNew:{f:F.wds+" (new)",c:`if (deviceId <= 0) throw new ArgumentException("DeviceId is required.");
+if (deviceCredentialId <= 0) throw new ArgumentException("DeviceCredentialId is required.");
+if (authenticatedDeviceId != deviceId) throw new InvalidOperationException("DeviceCredential does not own the route device.");`,h:[2]},
+staleOld:{f:F.wds+" (old)",c:`ExpireStaleWork(deviceId, now);
+...
+private void ExpireStaleWork(int deviceId, DateTime now)
+{
+    var staleJobs = _jobDataAccess.GetJobsByDeviceId(deviceId)
+        .Where(x => (x.Status.Equals("Claimed", StringComparison.OrdinalIgnoreCase) || x.Status.Equals("Executing", StringComparison.OrdinalIgnoreCase))
+                    && x.LeaseExpiresAtUtc.HasValue
+                    && x.LeaseExpiresAtUtc.Value <= now)
+        .OrderBy(x => x.CreatedDate)
+        .ThenBy(x => x.Id)
+        .ToList();`,h:[0,4,5,6,7]},
+staleNew:{f:F.wds+" (new)",c:`// Stale cleanup no longer runs here; StaleWorkExpiryService owns it on a 15 s timer.`,h:[0],
+ sql:{f:F.ja+" (new) · run by the 15 s timer, under a database lock",c:`SELECT ... FROM public.job
+ WHERE status IN ('Claimed','Executing')
+   AND leaseexpiresatutc <= @now`,h:[1,2]}},
+oldestOld:{f:F.wds+" (old)",c:`for (var i = 0; i < 50; i++)
+{
+    var job = _jobDataAccess.GetOldestQueuedJobByDeviceId(deviceId);
+    if (job == null) return null;`,h:[2],
+ sql:{f:F.ja+" (old)",c:`SELECT j.id, j.deviceid, ...
+  FROM public.job j
+  LEFT JOIN public.workflow w ON w.id = j.workflowid
+  WHERE j.deviceid = @deviceId
+    AND j.status = 'Queued'
+    AND ( j.workflowid IS NULL OR ( ...next step of a live workflow... ) )
+  ORDER BY
+    COALESCE(w.createddate, j.createddate),
+    CASE WHEN j.workflowid IS NULL THEN 1 ELSE 0 END,
+    COALESCE(j.stepnumber, 0), j.createddate, j.id
+  LIMIT 1;`,h:[7,8,9,10]}},
+oldestNew:{f:F.wds+" (new)",c:`for (var i = 0; i < 50; i++)
+{
+    var job = await _jobDataAccess.GetOldestQueuedJobByDeviceIdAsync(deviceId, ct);
+    if (job == null) return null;`,h:[2],
+ sql:{f:F.ja+" (new)",c:`SELECT ... FROM (
+    (SELECT ... FROM public.job j
+      WHERE j.deviceid = @deviceId AND j.status = 'Queued' AND j.workflowid IS NULL
+      ORDER BY j.createddate, COALESCE(j.stepnumber, 0), j.id
+      LIMIT 1)
+    UNION ALL
+    (SELECT ... FROM public.job j JOIN public.workflow w ON w.id = j.workflowid
+      WHERE ... next step of a live workflow ...
+      ORDER BY w.createddate, j.stepnumber, j.createddate, j.id
+      LIMIT 1)
+  ) candidate
+  ORDER BY queuedsince, standalonelast, COALESCE(stepnumber, 0), createddate, id
+  LIMIT 1;`,h:[4,9,12]}},
+validate:{f:F.wds+" (same in old and new)",c:`var decision = PrepareQueuedJobForDispatch(job, now);
+...
+private ValidationResult ValidateJobAgainstCurrentPose(Job job)
+{
+    var commandName = _jobDataAccess.GetCommandCatalogueNameById(job.CommandCatalogueId) ?? string.Empty;
+    var pose = BuildCurrentPose(job.DeviceId);
+    return ValidateAndSimulate(commandName, job.PayloadJson, job.DeviceId, pose);
+}
+...
+var map = _mapDataAccess.GetMapById(pose.MapId.Value);
+...
+if (commandName.Equals("MOVE", StringComparison.OrdinalIgnoreCase))
+{
+    MoveOneCell(next, +1);
+}
+...
+if (!IsOnMap(map, next.X!.Value, next.Y!.Value))`,h:[4,5,9,13,16]},
+claimOld:{f:F.wds+" (old)",c:`job.Status = "Claimed";
+job.ClaimedByDeviceCredentialId = deviceCredentialId;
+job.ClaimedAtUtc = now;
+job.LeaseExpiresAtUtc = now.AddMinutes(leaseMinutes);
+job.ModifiedDate = now;
+_jobDataAccess.UpdateJob(job.Id, job);`,h:[0,5],
+ sql:{f:F.ja+" (old)",c:`UPDATE public.job
+  SET deviceid = @deviceId,
+      workflowid = @workflowId,
+      ... every column ...
+      status = @status,
+      claimedbydevicecredentialid = ...
+  WHERE id = @id;`,h:[6]}},
+claimNew:{f:F.wds+" (new)",c:`var claimed = await _jobDataAccess.TryClaimJobAsync(job.Id, deviceCredentialId, now, now.AddMinutes(leaseMinutes), ct);
+if (claimed == null) continue; //another request won this job, go look for the next one`,h:[0,1],
+ sql:{f:F.ja+" (new)",c:`UPDATE public.job
+  SET status = 'Claimed',
+      claimedbydevicecredentialid = @deviceCredentialId,
+      claimedatutc = @claimedAtUtc,
+      leaseexpiresatutc = @leaseExpiresAtUtc,
+      modifieddate = @claimedAtUtc
+  WHERE id = @id
+    AND status = 'Queued'
+  RETURNING ...;`,h:[6,7,8]}},
+inverse:{f:F.wds+" (same in old and new)",c:`var (inverseCommandName, inversePayloadJson) = BuildCachedInverse(job);
+...
+var original = _jobDataAccess.GetCommandCatalogueById(job.CommandCatalogueId);
+...
+var inverseId = _jobDataAccess.GetCommandCatalogueIdByName(inverseName);
+...
+var inverse = _jobDataAccess.GetCommandCatalogueById(inverseId.Value);
+...
+if (_jobDataAccess.GetActiveDeviceCapability(job.DeviceId, inverse.Id) == null) return (null, null);`,h:[2,4,6,8]},
+replyClaim:{f:F.wds,c:`return new WorkItemClaimResponse
+{
+    WorkItemType = "Job",
+    Job = JobService.MapToResponse(job),
+    InverseCommandName = inverseCommandName,
+    InversePayloadJson = inversePayloadJson
+};`,h:[3]},
+replyClaimNew:{f:F.scen+" (the robot reading the reply)",c:`var job = body.RootElement.GetProperty("job");
+jobId = job.GetProperty("id").GetInt32();
+claimedAtUtc = job.GetProperty("claimedAtUtc").GetString(); //kept as the exact string and echoed back, like the Nano does`,h:[2]},
+authAgainOld:{f:F.auth+" (old)",c:`var credential = _credentials.GetDeviceCredentials()          // trip 1: whole table
+    .FirstOrDefault(...);
+...
+var device = _devices.GetDeviceById(credential.DeviceId);      // trip 2
+...
+_credentials.UpdateDeviceCredential(credential.Id, credential); // trip 3: write, every time`,h:[0,3,5]},
+authAgainNew:{f:F.auth+" (new)",c:`var credential = await _credentials.GetDeviceCredentialByCredentialIdentifierAsync(credentialIdentifier, ct); // trip 1: one row
+...
+var device = await _devices.GetDeviceByIdAsync(credential.DeviceId, ct);                                  // trip 2
+...
+await PersistLastUsedIfDueAsync(credential, ct);                                                          // skipped: saved under 10 min ago`,h:[0,2,4]},
+gateShortNew:{f:F.jc+" (new)",c:`[HttpPatch("/api/adapter/jobs/{jobId}/started")]
+[EnableRateLimiting(DispatchBackpressure.PolicyName)] //shares the dispatch permit pool`,h:[1]},
+ctrlStartOld:{f:F.jc+" (old)",c:`[HttpPatch("/api/adapter/jobs/{jobId}/started")]
+public ActionResult MarkJobStarted(int jobId)
+{
+    try
+    {
+        var credentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
+        var success = _service.MarkJobStarted(jobId, credentialId);
+        if (!success) return NotFound();
+        return NoContent();
+    }`,h:[1,5,6]},
+ctrlStartNew:{f:F.jc+" (new)",c:`[HttpPatch("/api/adapter/jobs/{jobId}/started")]
+[EnableRateLimiting(DispatchBackpressure.PolicyName)]
+public async Task<ActionResult> MarkJobStarted(int jobId, StartJobRequest request, CancellationToken ct)
+{
+    try
+    {
+        var credentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
+        var deviceId = _currentUserAccessor.GetRequiredDeviceId(User);
+        var success = await _service.MarkJobStartedAsync(jobId, request, credentialId, deviceId, ct);
+        if (!success) return NotFound();
+        return NoContent();
+    }`,h:[2,6,7]},
+readJobOld:{f:F.js+" (old)",c:`public bool MarkJobStarted(int id, int? deviceCredentialId = null)
+{
+    var existing = _dataAccess.GetJobById(id);
+    if (existing == null) return false;`,h:[2]},
+ownJobOld:{f:F.js+" (old)",c:`ValidateDeviceCredentialCanAccessJob(existing, deviceCredentialId);
+if (deviceCredentialId.HasValue && existing.ClaimedByDeviceCredentialId == null) existing.ClaimedByDeviceCredentialId = deviceCredentialId;
+...
+private void ValidateDeviceCredentialCanAccessJob(Job existing, int? deviceCredentialId)
+{
+    if (!_dataAccess.DeviceCredentialOwnsDevice(deviceCredentialId.Value, existing.DeviceId))
+    {
+        throw new UnauthorizedAccessException("This device credential does not own this job's device.");
+    }
+
+    ValidateClaimedCredential(existing, deviceCredentialId);`,h:[1,5]},
+statusOld:{f:F.js+" (old)",c:`if (existing.Status is "Completed" or "Failed" or "Cancelled" or "RolledBack") throw new InvalidOperationException("This job cannot be started from its current status.");`,h:[0]},
+writeStartOld:{f:F.js+" (old)",c:`existing.Status = "Executing";
+existing.ModifiedDate = DateTime.UtcNow;
+var updated = _dataAccess.UpdateJob(existing.Id, existing);
+if (updated) MarkParentWorkflowExecuting(existing.WorkflowId, deviceCredentialId, existing.ModifiedDate);
+return updated;`,h:[0,2],
+ sql:{f:F.ja+" (old)",c:`UPDATE public.job
+  SET ... every column ..., status = @status, ...
+  WHERE id = @id;`,h:[2]}},
+ticket:{f:F.js+" (new)",c:`public async Task<bool> MarkJobStartedAsync(int id, StartJobRequest request, int deviceCredentialId, int deviceId, CancellationToken ct = default)
+{
+    var claimedAtUtc = RequireClaimedAtUtc(request.ClaimedAtUtc); //the claim id the robot got from claim-next and echoed back`,h:[2]},
+readJobNew:{f:F.js+" (new)",c:`var existing = await _dataAccess.GetJobByIdAsync(id, ct); //read only to check ownership, never written back
+if (existing == null) return false;
+ValidateAuthenticatedDeviceCanAccessJob(existing, deviceCredentialId, deviceId); //job must belong to the robot's own device`,h:[0,2]},
+writeStartNew:{f:F.js+" (new)",c:`var started = await _dataAccess.TryMarkClaimedJobExecutingAsync(id, deviceCredentialId, claimedAtUtc, now, ct);
+if (started == null) throw new InvalidOperationException("This job cannot be started from its current status.");
+
+await MarkParentWorkflowExecutingAsync(started.WorkflowId, deviceCredentialId, now, ct);
+return true;`,h:[0,1],
+ sql:{f:F.ja+" (new)",c:`UPDATE public.job
+  SET status = @newStatus,           -- 'Executing'
+      modifieddate = @modifiedDate
+  WHERE id = @id
+    AND status = ANY(@fromStatuses)  -- only from 'Claimed'
+    AND claimedbydevicecredentialid = @deviceCredentialId
+    AND claimedatutc = @claimedAtUtc
+  RETURNING ...;`,h:[4,5,6]}},
+reply204Old:{f:F.jc,c:`var success = _service.MarkJobStarted(jobId, credentialId);
+if (!success) return NotFound();
+return NoContent();`,h:[2]},
+reply204New:{f:F.jc,c:`var success = await _service.MarkJobStartedAsync(jobId, request, credentialId, deviceId, ct);
+if (!success) return NotFound();
+return NoContent();`,h:[2]},
+ctrlDoneOld:{f:F.jc+" (old)",c:`[HttpPatch("/api/adapter/jobs/{jobId}/completed")]
+public ActionResult MarkJobCompleted(int jobId, CompleteJobRequest request)
+{
+    try
+    {
+        var credentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
+        var success = _service.MarkJobCompleted(jobId, request, credentialId);`,h:[1,6]},
+ctrlDoneNew:{f:F.jc+" (new)",c:`[HttpPatch("/api/adapter/jobs/{jobId}/completed")]
+[EnableRateLimiting(DispatchBackpressure.PolicyName)]
+public async Task<ActionResult> MarkJobCompleted(int jobId, CompleteJobRequest request, CancellationToken ct)
+{
+    try
+    {
+        var credentialId = _currentUserAccessor.GetRequiredDeviceCredentialId(User);
+        var deviceId = _currentUserAccessor.GetRequiredDeviceId(User);
+        var success = await _service.MarkJobCompletedAsync(jobId, request, credentialId, deviceId, ct);`,h:[2,7]},
+doneChecksOld:{f:F.js+" (old)",c:`var existing = _dataAccess.GetJobById(id);
+if (existing == null) return false;
+ValidateDeviceCredentialCanAccessJob(existing, deviceCredentialId);
+if (deviceCredentialId.HasValue && existing.ClaimedByDeviceCredentialId == null) existing.ClaimedByDeviceCredentialId = deviceCredentialId;
+if (existing.Status is "Completed" or "Failed" or "Cancelled" or "RolledBack") throw new InvalidOperationException("This job cannot be completed from its current status.");`,h:[0,2,4]},
+doneChecksNew:{f:F.js+" (new)",c:`var claimedAtUtc = RequireClaimedAtUtc(request.ClaimedAtUtc);
+var existing = await _dataAccess.GetJobByIdAsync(id, ct);
+if (existing == null) return false;
+ValidateAuthenticatedDeviceCanAccessJob(existing, deviceCredentialId, deviceId);`,h:[0,1,3]},
+json:{f:F.js+" (same in old and new)",c:`var resultJson = string.IsNullOrWhiteSpace(request.ResultJson) ? "{}" : request.ResultJson!;
+ValidateJsonObject(resultJson, "ResultJson");`,h:[0,1]},
+writeDoneOld:{f:F.js+" (old)",c:`existing.Status = "Completed";
+existing.ModifiedDate = DateTime.UtcNow;
+var updated = _dataAccess.UpdateJob(existing.Id, existing);
+if (!updated) return false;`,h:[0,2],
+ sql:{f:F.ja+" (old)",c:`UPDATE public.job
+  SET ... every column ..., status = @status, ...
+  WHERE id = @id;`,h:[2]}},
+writeDoneNew:{f:F.js+" (new)",c:`var completed = await _dataAccess.TryFinishClaimedJobAsync(id, deviceCredentialId, claimedAtUtc, CompletableStatuses, "Completed", DateTime.UtcNow, ct);
+if (completed == null) throw new InvalidOperationException("This job cannot be completed from its current status.");`,h:[0,1],
+ sql:{f:F.ja+" (new)",c:`UPDATE public.job
+  SET status = @newStatus,           -- 'Completed'
+      modifieddate = @modifiedDate
+  WHERE id = @id
+    AND status = ANY(@fromStatuses)  -- only from 'Executing'
+    AND claimedbydevicecredentialid = @deviceCredentialId
+    AND claimedatutc = @claimedAtUtc
+  RETURNING ...;`,h:[4,5,6]}},
+histOld:{f:F.js+" (old)",c:`InsertHistory(existing, true, true, resultJson, null, null);
+...
+var command = _dataAccess.GetCommandCatalogueById(job.CommandCatalogueId);
+...
+_jobHistoryDataAccess.InsertJobHistory(new JobHistory`,h:[0,2,4]},
+histNew:{f:F.js+" (new)",c:`await InsertHistoryAsync(completed, true, true, resultJson, null, null, ct); //side effects use the row PostgreSQL returned, not the earlier read`,h:[0]},
+pose:{f:F.js+" (same in old and new)",c:`ApplyCompletedJobPose(existing);
+...
+var commandName = _dataAccess.GetCommandCatalogueNameById(job.CommandCatalogueId) ?? string.Empty;
+var status = _deviceStatusDataAccess.GetDeviceStatusByDeviceId(job.DeviceId);
+...
+var map = _mapDataAccess.GetMapById(mapId);
+...
+_deviceStatusDataAccess.UpdateDeviceStatus(status.Id, status);`,h:[2,3,5,7]},
+reply204DoneOld:{f:F.jc,c:`var success = _service.MarkJobCompleted(jobId, request, credentialId);
+if (!success) return NotFound();
+return NoContent();`,h:[2]},
+reply204DoneNew:{f:F.jc,c:`var success = await _service.MarkJobCompletedAsync(jobId, request, credentialId, deviceId, ct);
+if (!success) return NotFound();
+return NoContent();`,h:[2]},
+prepared:{f:F.dbc+" (new)",c:`if (builder.MaxAutoPrepare == 0) builder.MaxAutoPrepare = ReadMaxAutoPrepare(); //F12: a statement repeated on a connection is planned once, not on every call`,h:[0]}
+};
+
+// ---------- race boxes ----------
+const RACE_OLD=`<span class="label">What if robots A and B ask for job 48213 at the same moment?</span>
+<table><tr><th>time</th><th>robot A's request</th><th>robot B's request</th></tr>
+<tr><td>1</td><td>reads job 48213: Queued</td><td></td></tr>
+<tr><td>2</td><td></td><td>reads job 48213: Queued</td></tr>
+<tr><td>3</td><td>writes "taken by A"</td><td></td></tr>
+<tr><td>4</td><td></td><td>writes "taken by B" over it</td></tr>
+<tr><td>5</td><td class="bad">drives to job 48213</td><td class="bad">drives to job 48213</td></tr></table>
+The write only says WHERE id = 48213, so nothing stops B overwriting A. Normally each robot only reads its own queue, so this needs two requests for the same robot at once (a retry, a reconnect, or two copies of the server).`;
+const RACE_NEW=`<span class="label">Same two requests, new code</span>
+<table><tr><th>time</th><th>robot A's request</th><th>robot B's request</th></tr>
+<tr><td>1</td><td>"take 48213 if still Queued"</td><td>"take 48213 if still Queued"</td></tr>
+<tr><td>2</td><td class="good">1 row changed: it's mine</td><td>waits for A's change to finish</td></tr>
+<tr><td>3</td><td></td><td class="good">0 rows changed: not Queued any more, try the next job</td></tr></table>
+Checking "is it still free?" and "mark it taken" happen in one statement, so PostgreSQL lets only one request through. Proof: a test fires 32 requests at one job at once and exactly 1 wins (DispatchConcurrencyTests).`;
+const LATE_OLD=`<span class="label">The late-message problem</span>
+Say robot 1007 loses its connection. Its 5-minute hold runs out, the job goes back to Queued, and robot 1008's request takes it. Then 1007's old "started" finally arrives. This code only refuses finished jobs, so it writes Executing anyway, and if the job had no claimer it would even adopt it. Two robots now think they own job 48213.`;
+const LATE_NEW=`<span class="label">The late-message problem, fixed</span>
+The robot must show the claimedAtUtc time it was given (its ticket). If the job was handed to someone else since, that time has changed, the UPDATE matches 0 rows, and the robot gets 409 Conflict instead of overwriting.`;
+
+// ---------- steps ----------
+// st: station, th: thread state (none|work|wait|free), db: trips, rows, q: query label, hl: message parts to highlight
+function S(o){return o}
+const STEPS={
+old:[
+[
+S({st:"robot",t:"Robot asks for its next job",th:"none",code:C.robotSend,hl:["line","headers","body"],
+ w:"Robot 1007 sends a POST to claim-next. Its name and password travel in two headers. The body only says how long it wants to hold the job: 5 minutes.",cw:"HTTP request headers and JSON body"}),
+S({st:"lb",t:"Load balancer picks a server",th:"none",code:C.lb,hl:["line"],
+ w:"On Azure the robot only knows one address. The load balancer hands the connection to vm-api-1 or vm-api-2. This works the same for old and new code. From here on we follow one server.",cw:"Azure Standard Load Balancer"}),
+S({st:"gate",t:"No limit at the door",th:"work",code:C.progOld,hl:[],chg:true,off:true,
+ w:"The old server has nothing that counts how many requests are already inside. Every request walks straight in, even when 5,000 robots arrive at once.",
+ diff:"New code adds a counter here: 64 requests worked on at once, 32 more waiting, and anyone after that is told \"come back in 1 second\" straight away. In the stress test the old server let everything in, requests waited about 60 s, and it finished 0 jobs.",cw:"no rate limiter in Program.cs"}),
+S({st:"auth",t:"Login check: read the two headers",th:"work",code:C.authHdr,hl:["headers"],
+ w:"The server pulls the robot's name (bench-cred-1007) and password out of the headers. If either is missing or blank, the request is refused right here.",cw:"DeviceCredentialAuthenticationHandler"}),
+S({st:"auth",t:"Login check: find this robot's login row",th:"wait",code:C.authLoadOld,hl:["headers"],chg:true,
+ db:{n:1,q:"read every login row",rows:"every robot's row: 400 at 400 robots, 5,000 at 5,000",what:"Reads the WHOLE login table into the server, then C# searches it for bench-cred-1007."},
+ w:"To find one robot's login, the old code asks the database for every robot's login and then searches the list in C#. The more robots, the bigger this read gets, on every single request.",
+ diff:"New code asks for one row by name: WHERE lower(credentialidentifier) = lower(@credentialIdentifier). The database returns 1 row no matter how many robots exist.",cw:"GetDeviceCredentials()"}),
+S({st:"auth",t:"Login check: is this login allowed?",th:"work",code:C.authChecks,hl:["headers"],
+ w:"Three checks on the row it found, all in the server's memory: switched on and not cancelled, not past its expiry date, and the password matches the stored scrambled copy (hash). Same in old and new.",cw:"VerifySecret"}),
+S({st:"auth",t:"Login check: is the robot itself switched on?",th:"wait",code:C.authDevOld,hl:["route"],
+ db:{n:1,q:"read robot 1007",rows:"1",what:"Reads robot 1007's row to check it is active."},
+ w:"Reads the robot's own row. Then checks the robot number in the address (/devices/1007/) is the same robot this login belongs to. Same in old and new.",cw:"GetDeviceById"}),
+S({st:"auth",t:"Login check: save \"last seen\" time",th:"wait",code:C.lastOld,hl:[],chg:true,
+ db:{n:1,q:"write login row",rows:"1 row written, every column",write:true,what:"Writes the whole login row back, on every request, from every robot."},
+ w:"Every request writes the time, IP address and app name back into the login row. A robot doing 3 requests per job writes this 3 times per job. It also writes every other column back, so a write that started before an admin cancelled the login could put the old values back.",
+ diff:"New code only writes if the saved time is more than 10 minutes old, and then only writes the three \"last seen\" columns. Most requests skip the write completely.",cw:"UpdateDeviceCredential"}),
+S({st:"auth",t:"Login passed: the robot's IDs are attached",th:"work",code:C.claims,hl:["badge"],badge:true,
+ w:"The login check writes the robot's IDs onto the request: login 1007 belongs to robot 1007. Everything after this reads these instead of asking again. Same in old and new.",cw:"claims on the ClaimsPrincipal"}),
+S({st:"ctrl",t:"Controller hands over to the service",th:"work",code:C.ctrlClaimOld,hl:["line","badge"],chg:true,
+ w:"The route /work-items/claim-next lands on ClaimNext. It reads the login ID from the attached IDs and calls the service. From now until the reply goes out, this server thread belongs to this one request, including all the time it sits waiting for the database.",
+ diff:"New code uses await. While the database works, the thread is handed back and serves another robot. Same work, fewer threads stuck waiting.",cw:"WorkDispatchController.ClaimNext"}),
+S({st:"svc",t:"Does this login own this robot? (asked again)",th:"wait",code:C.ownOld,hl:["route","badge"],chg:true,
+ db:{n:1,q:"ownership check",rows:"2 tables joined, 1 answer",what:"A second database question the login check already answered."},
+ w:"The service asks the database whether login 1007 owns robot 1007. The login check proved exactly that a few steps ago, so this trip gives no new information.",
+ diff:"New code compares two numbers already on the request: the robot in the address and the robot from the attached IDs. No database trip.",cw:"DeviceCredentialOwnsDevice"}),
+S({st:"svc",t:"Tidy up: look for jobs whose hold ran out",th:"wait",code:C.staleOld,hl:[],chg:true,
+ db:{n:1,q:"read ALL robot 1007 jobs",rows:"every job robot 1007 ever had: 2,000+",what:"Reads the robot's whole job history into C#, then filters for expired holds. It almost always finds none."},
+ w:"Before giving out work, the old code reads every job this robot has ever had and checks which ones were taken but never finished in time. It does this on every claim, even though the answer is nearly always \"none\".",
+ diff:"New code removed this from claim-next. A timer runs the tidy-up every 15 seconds in the background. It asks the database only for expired rows, and a database lock makes sure only one of the two servers runs it each round.",cw:"ExpireStaleWork"}),
+S({st:"svc",t:"Find the robot's oldest waiting job",th:"wait",code:C.oldestOld,hl:["route"],chg:true,
+ db:{n:1,q:"read + sort whole queue",rows:"the robot's whole queue, about 2,000, sorted to keep 1",what:"One combined sort order the database's ready-made sorted list (index) can't follow, so it reads and sorts the whole queue."},
+ w:"The robot gets its oldest job first. The old query mixes two kinds of job (single jobs and steps of a workflow) into one sort order, so the database reads every waiting job of this robot, sorts them all, and throws away all but one.",
+ diff:"New code splits it into two small lookups, one per kind of job. Each one walks a list the database already keeps sorted by age and stops at the first row (LIMIT 1). Then it keeps the older of the two. It picks the same job, which a test checks on 25 random queues.",cw:"GetOldestQueuedJobByDeviceId"}),
+S({st:"svc",t:"Is this move allowed from where the robot is?",th:"wait",code:C.validate,hl:[],
+ db:{n:3,q:"3 small reads",rows:"3 rows: command name, robot position, map",what:"Command name, the robot's saved position, the map."},
+ w:"Job 48213 is MOVE. The server reads where the robot is standing and which way it faces, works out the square after the move, and checks that square is still on the map. If not, the job is marked failed and the loop tries the next one. Same in old and new.",cw:"PrepareQueuedJobForDispatch"}),
+S({st:"svc",t:"Mark the job as taken",th:"wait",code:C.claimOld,hl:[],chg:true,race:RACE_OLD,
+ db:{n:1,q:"write whole job row",rows:"1 row written, every column",write:true,what:"UPDATE ... WHERE id = @id. Nothing in it checks the job is still free."},
+ w:"The old code changes the job in C# (status Claimed, who took it, when, hold until when) and then writes the whole row back. It read the job a moment ago and assumes nothing changed since.",
+ diff:"New code sends one statement: change it to Claimed WHERE id = 48213 AND status is still Queued. If another request got there first, 0 rows change and the loop moves on to the next job.",cw:"UpdateJob"}),
+S({st:"svc",t:"Work out the undo command",th:"wait",code:C.inverse,hl:[],
+ db:{n:4,q:"4 small reads",rows:"4 rows from the command list and robot abilities",what:"Looks up MOVE, finds its opposite (STEP_BACK), checks the robot can do it."},
+ w:"If the robot loses its connection mid-job it must be able to undo the move by itself. The server finds the opposite command (MOVE becomes STEP_BACK) and checks this robot can do it. Same in old and new.",cw:"BuildCachedInverse"}),
+S({st:"robot",t:"Reply: 200 OK with the job",th:"none",code:C.replyClaim,hl:["res"],reply:true,
+ w:"The job goes back to the robot as JSON. The robot drives one square forward. The old robot only keeps the job id.",cw:"WorkItemClaimResponse"})
+],
+[
+S({st:"robot",t:"Robot says: I started job 48213",th:"none",code:C.robotSend,hl:["line","headers"],
+ w:"A PATCH to /jobs/48213/started. The old robot sends no body: just the job id in the address and the two login headers.",cw:"PATCH started"}),
+S({st:"lb",t:"Load balancer picks a server",th:"none",code:C.lb,hl:["line"],w:"Same as request 1. This request may land on the other server.",cw:"Azure Standard Load Balancer"}),
+S({st:"gate",t:"No limit at the door",th:"work",code:C.progOld,hl:[],chg:true,off:true,w:"Same as request 1: nothing counts or limits requests.",diff:"New code puts this request through the same 64 + 32 counter as claim-next. All four robot requests share one counter, because they all end up at the same database.",cw:"no rate limiter"}),
+S({st:"auth",t:"Login check (all 6 steps again)",th:"wait",code:C.authAgainOld,hl:["headers"],chg:true,
+ db:{n:3,q:"3 login trips",rows:"whole login table + 1 robot row + 1 write",write:true,what:"The same three trips as in request 1, including the full-table read and the write."},
+ w:"Every request logs in again from scratch. The old login check costs 3 database trips each time, one of them reading every robot's login.",
+ diff:"New code: 2 trips (one login row, one robot row). The \"last seen\" write is skipped.",cw:"DeviceCredentialAuthenticationHandler"}),
+S({st:"ctrl",t:"Controller hands over to the service",th:"work",code:C.ctrlStartOld,hl:["line","badge"],chg:true,
+ w:"MarkJobStarted takes the job id from the address and the login id from the attached IDs. The thread stays with this request until the reply.",diff:"New code also takes a body with claimedAtUtc, and uses await so the thread is freed during database waits.",cw:"JobsController.MarkJobStarted"}),
+S({st:"svc",t:"Read job 48213",th:"wait",code:C.readJobOld,hl:["line"],
+ db:{n:1,q:"read job 48213",rows:"1",what:"Reads the job row."},
+ w:"Reads the job so it can check it. Both versions do this.",cw:"GetJobById"}),
+S({st:"svc",t:"Does this login own the job's robot? (asked again)",th:"wait",code:C.ownJobOld,hl:["badge"],chg:true,
+ db:{n:1,q:"ownership check",rows:"2 tables joined, 1 answer",what:"The same question the login check already answered."},
+ w:"Asks the database again whether this login owns the robot. Then, if the job has no claimer recorded, it simply writes this login in as the claimer, so a login can take a job it never claimed.",
+ diff:"New code checks ownership by comparing numbers already on the request (no trip), and never adopts an unclaimed job.",cw:"ValidateDeviceCredentialCanAccessJob"}),
+S({st:"svc",t:"Is the job in a state that can start?",th:"work",code:C.statusOld,hl:[],chg:true,race:LATE_OLD,
+ w:"The only check is \"not already finished\". A job that is still Queued, or one whose hold already ran out, passes.",
+ diff:"New code only lets Claimed become Executing, and only for the exact claim the robot holds a ticket for.",cw:"status check"}),
+S({st:"svc",t:"Write Executing",th:"wait",code:C.writeStartOld,hl:[],chg:true,
+ db:{n:1,q:"write whole job row",rows:"1 row written, every column",write:true,what:"UPDATE ... WHERE id = @id, no conditions."},
+ w:"Sets status to Executing in C# and writes every column back, matching on the job id only.",diff:"New code: UPDATE only if status is Claimed AND claimed by this login AND the claim time matches the ticket. 0 rows means the robot gets 409.",cw:"UpdateJob"}),
+S({st:"robot",t:"Reply: 204 No Content",th:"none",code:C.reply204Old,hl:["res"],reply:true,w:"\"Done, nothing to send back.\" The robot is now executing the move.",cw:"NoContent()"})
+],
+[
+S({st:"robot",t:"Robot says: job 48213 is done",th:"none",code:C.robotSend,hl:["line","headers","body"],w:"A PATCH to /jobs/48213/completed with a result body. For a MOVE the result is empty: {}.",cw:"PATCH completed"}),
+S({st:"lb",t:"Load balancer picks a server",th:"none",code:C.lb,hl:["line"],w:"Same as before.",cw:"Azure Standard Load Balancer"}),
+S({st:"gate",t:"No limit at the door",th:"work",code:C.progOld,hl:[],chg:true,off:true,w:"Same as before: nothing counts or limits requests.",diff:"New code: the same shared 64 + 32 counter.",cw:"no rate limiter"}),
+S({st:"auth",t:"Login check (all 6 steps again)",th:"wait",code:C.authAgainOld,hl:["headers"],chg:true,
+ db:{n:3,q:"3 login trips",rows:"whole login table + 1 robot row + 1 write",write:true,what:"Same three trips again."},
+ w:"Third full login for the same job. 3 trips, one of them the whole login table.",diff:"New code: 2 small trips.",cw:"DeviceCredentialAuthenticationHandler"}),
+S({st:"ctrl",t:"Controller hands over to the service",th:"work",code:C.ctrlDoneOld,hl:["line","badge"],chg:true,w:"MarkJobCompleted gets the job id, the result body and the login id.",diff:"New code adds the device id from the attached IDs and uses await.",cw:"JobsController.MarkJobCompleted"}),
+S({st:"svc",t:"Read the job and check it again",th:"wait",code:C.doneChecksOld,hl:["badge"],chg:true,
+ db:{n:2,q:"job + ownership",rows:"1 job row, then the 2-table ownership check",what:"Read job, then ask the ownership question again."},
+ w:"Reads the job, asks the database about ownership again, adopts the job if nobody claimed it, and only refuses jobs that already finished. So a Claimed job that was never started can jump straight to Completed.",
+ diff:"New code: ticket required, ownership compared in memory (1 trip instead of 2), and only Executing can become Completed.",cw:"MarkJobCompleted"}),
+S({st:"svc",t:"Check the result is valid JSON",th:"work",code:C.json,hl:["body"],w:"The result must be a JSON object. An empty one becomes {}. Same in old and new.",cw:"ValidateJsonObject"}),
+S({st:"svc",t:"Write Completed",th:"wait",code:C.writeDoneOld,hl:[],chg:true,
+ db:{n:1,q:"write whole job row",rows:"1 row written, every column",write:true,what:"UPDATE ... WHERE id = @id, no conditions."},
+ w:"Writes every column back with status Completed, matching on the job id only.",diff:"New code: only from Executing, only for this login and this claim time.",cw:"UpdateJob"}),
+S({st:"svc",t:"Write the history record",th:"wait",code:C.histOld,hl:[],
+ db:{n:2,q:"read command + insert",rows:"1 read, 1 new row",write:true,what:"Reads the command, adds a row to the job history."},
+ w:"Adds a permanent record: job 48213, MOVE, succeeded, at this time. Both versions do this. The DB check after every Azure run counted these rows to prove each finished job has exactly one.",cw:"InsertHistory"}),
+S({st:"svc",t:"Save the robot's new position",th:"wait",code:C.pose,hl:[],
+ db:{n:4,q:"3 reads + 1 write",rows:"command, position, map read; position written",write:true,what:"Works out the new square and saves it."},
+ w:"The robot moved one square, so its saved position moves one square too. The next MOVE will be checked from here. Same in old and new.",cw:"ApplyCompletedJobPose"}),
+S({st:"robot",t:"Reply: 204 No Content",th:"none",code:C.reply204DoneOld,hl:["res"],reply:true,w:"Job finished. The robot loops back to request 1 for its next job.",cw:"NoContent()"})
+]
+],
+new:[
+[
+S({st:"robot",t:"Robot asks for its next job",th:"none",code:C.robotSend,hl:["line","headers","body"],
+ w:"Same request as the old code: POST to claim-next with the two login headers and a 5-minute hold.",cw:"HTTP request headers and JSON body"}),
+S({st:"lb",t:"Load balancer picks a server",th:"none",code:C.lb,hl:["line"],
+ w:"The load balancer hands the connection to vm-api-1 or vm-api-2. Two copies of the same server now share the work, which is why the new code has to be safe when two requests touch the same job.",cw:"Azure Standard Load Balancer"}),
+S({st:"gate",t:"Door limit lets it in",th:"work",code:C.bp,hl:[],chg:true,sub:C.progNew,
+ w:"First thing on arrival: count the requests already inside. Up to 64 are worked on at once and 32 more can wait in line, oldest first. This one finds a free spot. If all 96 were taken it would get 429 \"come back in 1 second\" immediately, before the login check spends any database time on it.",
+ diff:"Old code had no counter. In the stress test, at 5,000 robots, new turned away 146,172 requests with 429 and still finished 1,008 jobs per second. Old let everyone in and finished 0.",cw:"AddConcurrencyLimiter, UseRateLimiter before UseAuthentication"}),
+S({st:"auth",t:"Login check: read the two headers",th:"work",code:C.authHdr,hl:["headers"],
+ w:"Same as old: pull out the robot's name and password, refuse if either is missing.",cw:"DeviceCredentialAuthenticationHandler"}),
+S({st:"auth",t:"Login check: find this robot's login row",th:"free",code:C.authLoadNew,hl:["headers"],chg:true,
+ db:{n:1,q:"read 1 login row",rows:"1",prep:true,what:"WHERE lower(credentialidentifier) = lower(@credentialIdentifier): the database finds the one row."},
+ w:"Asks the database for exactly one row: the login called bench-cred-1007. The answer is 1 row whether there are 10 robots or 5,000. While the database looks, the await hands this thread back to serve someone else.",
+ diff:"Old code read every robot's login row and searched in C#.",cw:"GetDeviceCredentialByCredentialIdentifierAsync"}),
+S({st:"auth",t:"Login check: is this login allowed?",th:"work",code:C.authChecks,hl:["headers"],
+ w:"Same three checks as old: switched on and not cancelled, not expired, password matches the stored hash.",cw:"VerifySecret"}),
+S({st:"auth",t:"Login check: is the robot itself switched on?",th:"free",code:C.authDevNew,hl:["route"],
+ db:{n:1,q:"read robot 1007",rows:"1",prep:true,what:"Reads robot 1007's row."},
+ w:"Same check as old, but awaited, so the thread is free while the database answers.",cw:"GetDeviceByIdAsync"}),
+S({st:"auth",t:"Login check: \"last seen\" time saved recently? Skip",th:"work",code:C.lastNew,hl:[],chg:true,
+ w:"The row just read says it was last saved less than 10 minutes ago, so nothing is written. When it is time to save, only the three \"last seen\" columns are written, so it can never undo an admin cancelling the login.",
+ diff:"Old code wrote the whole login row on every request.",cw:"PersistLastUsedIfDueAsync"}),
+S({st:"auth",t:"Login passed: the robot's IDs are attached",th:"work",code:C.claims,hl:["badge"],badge:true,
+ w:"Same as old: login 1007 belongs to robot 1007, written onto the request. The new code uses the robot ID from here later instead of asking the database.",cw:"claims"}),
+S({st:"ctrl",t:"Controller hands over to the service",th:"work",code:C.ctrlClaimNew,hl:["line","badge"],chg:true,
+ w:"ClaimNext reads both IDs (login and robot) from the attached IDs and calls the service with await. Every database wait from here on gives the thread back to the server.",
+ diff:"Old code was not async: one thread was held for the whole request, including every database wait.",cw:"ClaimNextWorkItemAsync, CancellationToken"}),
+S({st:"svc",t:"Does this login own this robot? Compare two numbers",th:"work",code:C.ownNew,hl:["route","badge"],chg:true,
+ w:"The robot in the address (1007) must equal the robot from the attached IDs (1007). Two numbers already in memory, no database trip.",
+ diff:"Old code asked the database this question again.",cw:"authenticatedDeviceId != deviceId"}),
+S({st:"svc",t:"Tidy-up is not done here any more",th:"work",code:C.staleNew,hl:[],chg:true,
+ w:"Nothing happens at this step now. A background timer finds expired holds every 15 seconds, asking the database only for expired rows. With two servers, a database lock means only one of them tidies up each round, so the same job can't be handled twice.",
+ diff:"Old code read the robot's whole job history on every claim to do this.",cw:"StaleWorkExpiryService + pg_try_advisory_xact_lock"}),
+S({st:"svc",t:"Find the robot's oldest waiting job",th:"free",code:C.oldestNew,hl:["route"],chg:true,sub:C.prepared,
+ db:{n:1,q:"2 short lookups",rows:"about 2: front of each sorted list",prep:true,what:"Two LIMIT 1 lookups that each walk an already-sorted list (index) and stop at the first row."},
+ w:"Two quick questions: \"oldest single job for robot 1007\" and \"next workflow step for robot 1007\". Each reads from a list the database keeps sorted already, takes the first row, and stops. Then it keeps the older of the two. It also reuses the plan: this connection already worked out how to run this exact query, so the database skips straight to running it.",
+ diff:"Old code read and sorted the robot's whole queue (about 2,000 rows) to keep one. Measured on the laptop: rows read per job 2,864 → 682, and with plans reused, database CPU per job 14.6 ms → 9.0 ms.",cw:"UNION ALL of two LIMIT 1 queries, Max Auto Prepare"}),
+S({st:"svc",t:"Is this move allowed from where the robot is?",th:"free",code:C.validate,hl:[],
+ db:{n:3,q:"3 small reads",rows:"3 rows: command name, robot position, map",prep:true,what:"Same three reads as old, awaited."},
+ w:"Unchanged rules: work out the square after the MOVE and check it is still on the map.",cw:"PrepareQueuedJobForDispatchAsync"}),
+S({st:"svc",t:"Take the job, only if it is still free",th:"free",code:C.claimNew,hl:[],chg:true,race:RACE_NEW,
+ db:{n:1,q:"take if still Queued",rows:"1 row changed (or 0 if someone was faster)",write:true,prep:true,what:"UPDATE ... WHERE id = @id AND status = 'Queued' RETURNING the row."},
+ w:"One statement does the check and the change together: \"set job 48213 to Claimed, but only if it is still Queued\". The database sends back the updated row. If another request took it first, nothing comes back and the loop simply goes to the next job.",
+ diff:"Old code read first, wrote later, and never checked in between.",cw:"TryClaimJobAsync"}),
+S({st:"svc",t:"Work out the undo command",th:"free",code:C.inverse,hl:[],
+ db:{n:4,q:"4 small reads",rows:"4 rows",prep:true,what:"Same as old, built from the row the database sent back."},
+ w:"Same as old: MOVE becomes STEP_BACK, and the robot must be able to do it.",cw:"BuildCachedInverseAsync"}),
+S({st:"robot",t:"Reply: 200 OK, the robot keeps its ticket",th:"none",code:C.replyClaimNew,hl:["res","ticket"],reply:true,
+ w:"Same JSON as old. The difference is on the robot: it keeps claimedAtUtc exactly as received. That time is its ticket, and it must show it on \"started\" and \"completed\".",cw:"claimedAtUtc"})
+],
+[
+S({st:"robot",t:"Robot says: I started job 48213, here is my ticket",th:"none",code:C.robotSend,hl:["line","headers","body"],
+ w:"PATCH /jobs/48213/started, now with a body: the claimedAtUtc ticket from the claim reply.",cw:"StartJobRequest"}),
+S({st:"lb",t:"Load balancer picks a server",th:"none",code:C.lb,hl:["line"],w:"Same as before. This request may land on the other server, which is fine because both use the same database.",cw:"Azure Standard Load Balancer"}),
+S({st:"gate",t:"Door limit lets it in",th:"work",code:C.gateShortNew,hl:[],chg:true,
+ w:"Same shared counter as claim-next. If the server is full, the robot waits for the Retry-After time and sends \"started\" again.",diff:"Old code had no counter.",cw:"EnableRateLimiting"}),
+S({st:"auth",t:"Login check (2 trips)",th:"free",code:C.authAgainNew,hl:["headers"],chg:true,
+ db:{n:2,q:"2 login trips",rows:"1 login row + 1 robot row",prep:true,what:"No full-table read, no write."},
+ w:"Same login steps as request 1: one login row, one robot row, and the \"last seen\" write skipped.",diff:"Old code: 3 trips including the whole login table and a write.",cw:"DeviceCredentialAuthenticationHandler"}),
+S({st:"ctrl",t:"Controller hands over to the service",th:"work",code:C.ctrlStartNew,hl:["line","badge","body"],chg:true,
+ w:"MarkJobStarted now takes the body (the ticket) plus login ID and robot ID from the attached IDs.",diff:"Old code took no body, so it could not tell which claim the robot was talking about.",cw:"MarkJobStartedAsync"}),
+S({st:"svc",t:"No ticket, no entry",th:"work",code:C.ticket,hl:["body"],chg:true,
+ w:"If claimedAtUtc is missing the robot gets 400 Bad Request. Old firmware that doesn't send it can't start jobs any more, which is why the Nano code was updated too.",diff:"Old code had no ticket.",cw:"RequireClaimedAtUtc"}),
+S({st:"svc",t:"Read job 48213, check it is this robot's",th:"free",code:C.readJobNew,hl:["badge"],chg:true,
+ db:{n:1,q:"read job 48213",rows:"1",prep:true,what:"Read only to check ownership; never written back."},
+ w:"Reads the job and checks it belongs to robot 1007 by comparing with the attached IDs. The row is only looked at, never saved back.",diff:"Old code also asked the database the ownership question (one more trip) and adopted unclaimed jobs.",cw:"ValidateAuthenticatedDeviceCanAccessJob"}),
+S({st:"svc",t:"Executing, only if the ticket matches",th:"free",code:C.writeStartNew,hl:["body"],chg:true,race:LATE_NEW,
+ db:{n:1,q:"guarded update",rows:"1 row changed, or 0 → 409",write:true,prep:true,what:"UPDATE ... WHERE status = Claimed AND claimed by this login AND claimedatutc = ticket RETURNING."},
+ w:"One statement: change to Executing only if the job is Claimed, claimed by this login, and the claim time equals the ticket. If any of that is false, 0 rows change and the robot gets 409 Conflict.",
+ diff:"Old code wrote Executing over whatever was there.",cw:"TryMarkClaimedJobExecutingAsync"}),
+S({st:"robot",t:"Reply: 204 No Content",th:"none",code:C.reply204New,hl:["res"],reply:true,w:"Accepted. The robot is now executing the move.",cw:"NoContent()"})
+],
+[
+S({st:"robot",t:"Robot says: job 48213 is done, here is my ticket",th:"none",code:C.robotSend,hl:["line","headers","body"],w:"PATCH /jobs/48213/completed with the ticket and the (empty) result.",cw:"CompleteJobRequest"}),
+S({st:"lb",t:"Load balancer picks a server",th:"none",code:C.lb,hl:["line"],w:"Same as before.",cw:"Azure Standard Load Balancer"}),
+S({st:"gate",t:"Door limit lets it in",th:"work",code:C.gateShortNew,hl:[],chg:true,w:"Same shared counter.",diff:"Old code had no counter.",cw:"EnableRateLimiting"}),
+S({st:"auth",t:"Login check (2 trips)",th:"free",code:C.authAgainNew,hl:["headers"],chg:true,
+ db:{n:2,q:"2 login trips",rows:"1 login row + 1 robot row",prep:true,what:"No full-table read, no write."},
+ w:"Same login as before.",diff:"Old code: 3 trips.",cw:"DeviceCredentialAuthenticationHandler"}),
+S({st:"ctrl",t:"Controller hands over to the service",th:"work",code:C.ctrlDoneNew,hl:["line","badge","body"],chg:true,w:"MarkJobCompleted gets the ticket, the result, the login ID and the robot ID.",diff:"Old code had no robot ID and no ticket.",cw:"MarkJobCompletedAsync"}),
+S({st:"svc",t:"Ticket, read job, check it is this robot's",th:"free",code:C.doneChecksNew,hl:["body","badge"],chg:true,
+ db:{n:1,q:"read job 48213",rows:"1",prep:true,what:"Read only to check ownership."},
+ w:"Ticket required, job read, ownership compared in memory.",diff:"Old code: 2 trips (job + ownership again), no ticket, adopted unclaimed jobs.",cw:"RequireClaimedAtUtc"}),
+S({st:"svc",t:"Check the result is valid JSON",th:"work",code:C.json,hl:["body"],w:"Same as old.",cw:"ValidateJsonObject"}),
+S({st:"svc",t:"Completed, only from Executing, only with the ticket",th:"free",code:C.writeDoneNew,hl:["body"],chg:true,
+ db:{n:1,q:"guarded update",rows:"1 row changed, or 0 → 409",write:true,prep:true,what:"UPDATE ... WHERE status = Executing AND claimed by this login AND claimedatutc = ticket RETURNING."},
+ w:"Same pattern as \"started\": the job must be Executing, claimed by this login, with the same claim time. A job can't skip Executing, and a late \"completed\" from an old claim can't land.",
+ diff:"Old code wrote Completed over whatever was there.",cw:"TryFinishClaimedJobAsync"}),
+S({st:"svc",t:"Write the history record",th:"free",code:C.histNew,hl:[],
+ db:{n:2,q:"read command + insert",rows:"1 read, 1 new row",write:true,prep:true,what:"Uses the row the database sent back after the update."},
+ w:"Same record as old, but built from the row the database returned after the update, not from the earlier read.",cw:"InsertHistoryAsync"}),
+S({st:"svc",t:"Save the robot's new position",th:"free",code:C.pose,hl:[],
+ db:{n:4,q:"3 reads + 1 write",rows:"command, position, map read; position written",write:true,prep:true,what:"Same as old, awaited."},
+ w:"Same as old: the saved position moves one square.",cw:"ApplyCompletedJobPoseAsync"}),
+S({st:"robot",t:"Reply: 204 No Content",th:"none",code:C.reply204DoneNew,hl:["res"],reply:true,w:"Job finished. The robot loops back to request 1.",cw:"NoContent()"})
+]
+]
+};
+
+// ---------- state ----------
+let mode="old", req=0, idx=0, timer=null;
+try{const s=JSON.parse(localStorage.getItem("pipe")||"{}"); if(s.mode)mode=s.mode; if(Number.isInteger(s.req))req=s.req;}catch(e){}
+const $=id=>document.getElementById(id);
+const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+function buildNodes(){
+  $("nodes").innerHTML=STATIONS.map(s=>`<div class="node${s.id==="db"?" dbnode":""}" id="n-${s.id}"><span class="t">${s.t}</span><span class="s">${s.s}</span></div>`).join("");
+}
+function centre(id){
+  const lane=$("lane").getBoundingClientRect(), n=$("n-"+id).getBoundingClientRect();
+  return n.left-lane.left+n.width/2;
+}
+function trips(list,upto){let t=0;for(let i=0;i<=upto&&i<list.length;i++)t+=(list[i].db?list[i].db.n:0);return t}
+function total(m,r){return trips(STEPS[m][r],999)}
+
+function renderCode(c){
+  if(!c) return "";
+  const lines=c.c.split("\n");
+  return `<div class="code"><div class="file">${esc(c.f)}</div><pre>${lines.map((l,i)=>`<span class="ln${c.h.includes(i)?" h":""}">${esc(l)||" "}</span>`).join("")}</pre></div>`;
+}
+
+function renderMsg(step){
+  const m=MSG[mode][req], hl=step.hl||[], H=k=>hl.includes(k);
+  const passedAuth = STEPS[mode][req].indexOf(step) >= STEPS[mode][req].findIndex(s=>s.badge) && STEPS[mode][req].some(s=>s.badge);
+  const authDone = passedAuth || (req>0 && ["ctrl","svc"].includes(step.st)) || (req>0 && step.reply);
+  const showBadge = authDone && !step.reply;
+  let o="";
+  if(step.reply){
+    $("msgSub").textContent="what the server sends back";
+    o+=`<span class="sec">${H("res")?`<span class="h">${m.res.code}</span>`:m.res.code}</span>\n`;
+    if(!m.res.body.length) o+=`<span class="k">(no body)</span>`;
+    else{
+      o+="{\n";
+      m.res.body.forEach(([k,v])=>{const hot=H("ticket")&&k==="job.claimedAtUtc"; o+=`  <span class="k">${k}:</span> ${hot?`<span class="h">${esc(v)}</span>`:esc(v)}\n`});
+      o+="}";
+      if(mode==="new"&&req===0) o+=`\n\n<span class="badge">robot keeps: jobId = 48213, claimedAtUtc = the ticket</span>`;
+      if(mode==="old"&&req===0) o+=`\n\n<span class="k">robot keeps: jobId = 48213</span>`;
+    }
+    $("msg").innerHTML=o; return;
+  }
+  $("msgSub").textContent="what the robot sent";
+  const line=`${m.req.m} ${m.req.p}`;
+  let lineHtml=esc(line);
+  if(H("route")) lineHtml=lineHtml.replace("/1007/",'/<span class="h">1007</span>/').replace("/48213/",'/<span class="h">48213</span>/');
+  o+=`<span class="sec">${H("line")?`<span class="h">${lineHtml}</span>`:lineHtml}</span>\n\n<span class="k">headers</span>\n`;
+  HDR.forEach(([k,v])=>{o+=`  <span class="k">${k}:</span> ${H("headers")?`<span class="h">${v}</span>`:v}\n`});
+  o+=`\n<span class="k">body</span>\n`;
+  if(!m.req.body) o+=`  <span class="k">(none)</span>\n`;
+  else{o+="  {\n"; m.req.body.forEach(([k,v])=>{o+=`    <span class="k">${k}:</span> ${H("body")?`<span class="h">${esc(v)}</span>`:esc(v)}\n`}); o+="  }\n";}
+  if(showBadge){
+    const b=`login (DeviceCredentialId) = 1007\nrobot (DeviceId)            = 1007\nname                        = bench-cred-1007`;
+    o+=`\n<span class="badge">attached by the login check</span>\n${H("badge")?`<span class="h">${b}</span>`:b}`;
+  }
+  $("msg").innerHTML=o;
+}
+
+const THREAD={
+  none:["none","Not on the server yet"],
+  work:["work","Server thread: working"],
+  wait:["wait","Server thread: stuck waiting for the database"],
+  free:["free","Server thread: handed back while the database works"]
+};
+
+function render(animate=true){
+  const app=$("app");
+  app.className="wrap mode-"+mode;
+  $("mOld").setAttribute("aria-pressed",mode==="old"); $("mNew").setAttribute("aria-pressed",mode==="new");
+  document.querySelectorAll("#reqSeg button").forEach(b=>b.setAttribute("aria-pressed",+b.dataset.r===req));
+  const list=STEPS[mode][req]; idx=Math.max(0,Math.min(idx,list.length-1)); const step=list[idx];
+
+  // nodes
+  STATIONS.forEach(s=>{const n=$("n-"+s.id); n.classList.toggle("on",s.id===step.st||(step.db&&s.id==="db")); n.classList.toggle("off",s.id==="gate"&&mode==="old");});
+  $("n-gate").querySelector(".s").textContent=mode==="old"?"none in old code":"64 inside, 32 waiting";
+  // packet
+  const p=$("packet"), m=MSG[mode][req];
+  p.className="packet"+(step.reply?" reply":"");
+  p.textContent=step.reply?(m.res.code):(m.req.m+" "+["claim-next","started","completed"][req]);
+  const x=centre(step.st);
+  if(!animate){p.style.transition="none";p.style.left=x+"px";p.offsetHeight;p.style.transition="";} else p.style.left=x+"px";
+  // query pill
+  const q=$("query"); q.classList.remove("go");
+  if(step.db){
+    q.textContent=step.db.q+(step.db.n>1?` (×${step.db.n})`:"");
+    q.style.setProperty("--from",centre(step.st)+"px"); q.style.setProperty("--to",centre("db")+"px");
+    q.style.left=centre(step.st)+"px"; void q.offsetWidth; if(animate) q.classList.add("go");
+  }
+  // thread
+  const [cls,txt]=THREAD[step.th];
+  $("threadrow").innerHTML=`<span class="pill ${cls}"><span class="dot"></span>${txt}</span>`+
+    (step.db?`<span class="pill" style="color:var(--db)"><span class="dot"></span>${step.db.write?"Database write":"Database read"}: ${esc(step.db.rows)}</span>`:"")+
+    (step.db?(step.db.prep?`<span class="pill free"><span class="dot"></span>Plan reused (prepared statement)</span>`:`<span class="pill none"><span class="dot"></span>Database works out the plan again</span>`):"");
+
+  renderMsg(step);
+  // code
+  $("codeSub").textContent=step.cw?"":"";
+  $("code").innerHTML=renderCode(step.code)+(step.code&&step.code.sql?`<div class="sql">${renderCode(step.code.sql).replace('class="code"','class="code"')}</div>`:"")+(step.sub?`<div class="sql">${renderCode(step.sub)}</div>`:"");
+  // words
+  $("stepNo").textContent=`step ${idx+1} of ${list.length}`;
+  let w=`<p class="title">${esc(step.t)}</p><p class="codeword">In the code: <code>${esc(step.cw||"")}</code></p><p class="plain">${esc(step.w)}</p>`;
+  if(step.db) w+=`<div class="box dbbox"><span class="label">Database: ${step.db.n} trip${step.db.n>1?"s":""}</span>${esc(step.db.what)}</div>`;
+  if(step.diff) w+=`<div class="box diff"><span class="label">${mode==="old"?"What the new code does instead":"What the old code did"}</span>${esc(step.diff)}</div>`;
+  if(step.race) w+=`<div class="box race">${step.race}</div>`;
+  $("words").innerHTML=w;
+  // steps list
+  $("steps").innerHTML=list.map((s,i)=>`<li><button data-i="${i}" ${i===idx?'aria-current="step"':""}><span class="n">${i+1}</span><span>${esc(s.t)}</span>${s.chg?'<span class="chg">CHANGED</span>':""}${s.db?`<span class="dbn">${s.db.n} DB</span>`:""}<span class="where">${STATIONS.find(t=>t.id===s.st).t}</span></button></li>`).join("");
+  // tally
+  const so=trips(list,idx), lbl=["claim-next","started","completed"][req];
+  $("tally").innerHTML=
+   `<div class="tile"><span class="label">Database trips, this request</span><div><b class="o">${total("old",req)}</b> old · <b class="n">${total("new",req)}</b> new</div><p>${lbl}: you are at trip ${so} of ${total(mode,req)} (${mode})</p></div>`+
+   `<div class="tile"><span class="label">Database trips, whole job</span><div><b class="o">${[0,1,2].reduce((a,r)=>a+total("old",r),0)}</b> old · <b class="n">${[0,1,2].reduce((a,r)=>a+total("new",r),0)}</b> new</div><p>3 requests: claim, started, completed</p></div>`+
+   `<div class="tile"><span class="label">Measured on Azure, 400 robots</span><div><b class="o">177</b> old · <b class="n">608</b> new</div><p>jobs per second on 1 server (1,069 new on 2 servers)</p></div>`;
+  try{localStorage.setItem("pipe",JSON.stringify({mode,req}))}catch(e){}
+}
+
+function go(d){
+  const list=STEPS[mode][req];
+  if(d>0&&idx===list.length-1){ if(req<2){req++;idx=0;render(false);return} stop(); return }
+  if(d<0&&idx===0){ if(req>0){req--;idx=STEPS[mode][req].length-1;render(false)} return }
+  idx+=d; render(true);
+}
+function play(){ if(timer){stop();return} $("play").textContent="❚❚ Pause"; tick(); }
+function tick(){ timer=setTimeout(()=>{go(1); if(timer) tick();}, +$("speed").value); }
+function stop(){ clearTimeout(timer); timer=null; $("play").textContent="▶ Play"; }
+
+buildNodes();
+$("mOld").onclick=()=>{mode="old";idx=Math.min(idx,STEPS.old[req].length-1);render(false)};
+$("mNew").onclick=()=>{mode="new";idx=Math.min(idx,STEPS.new[req].length-1);render(false)};
+document.querySelectorAll("#reqSeg button").forEach(b=>b.onclick=()=>{req=+b.dataset.r;idx=0;stop();render(false)});
+$("next").onclick=()=>{stop();go(1)}; $("prev").onclick=()=>{stop();go(-1)}; $("play").onclick=play;
+$("steps").onclick=e=>{const b=e.target.closest("button[data-i]"); if(!b)return; stop(); idx=+b.dataset.i; render(true)};
+document.addEventListener("keydown",e=>{ if(e.target.closest("select"))return; if(e.key==="ArrowRight"){stop();go(1)} else if(e.key==="ArrowLeft"){stop();go(-1)} else if(e.key===" "){e.preventDefault();play()} });
+window.addEventListener("resize",()=>render(false));
+render(false);
+</script>

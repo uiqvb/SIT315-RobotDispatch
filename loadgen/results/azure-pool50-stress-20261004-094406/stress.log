@@ -1,0 +1,31 @@
+started (UTC): 2026-10-04T09:44:06+00:00
+region: koreacentral (Azure for Students)
+load VM Standard_D2ds_v4: vm-load: 2 vCPU, 7.8 GB, Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz
+API VM Standard_D2s_v4 10.10.1.5: vm-api-1: 2 vCPU, 7.8 GB, Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz
+API VM Standard_D2s_v4 10.10.1.6: vm-api-2: 2 vCPU, 7.8 GB, Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz
+database: Azure Database for PostgreSQL Flexible Server 18, Standard_D8ds_v5, 8 vCore, 128 GB, private subnet, TLS off, Maximum Pool Size=50 per replica
+load balancer: Azure Standard internal LB 10.10.1.100:80 to :8080, HTTP probe /health every 5 s
+images: robot-api:old = sit315 9faf8b1, robot-api:new = phase-4 a87f92d, robot-loadgen = phase-4 a87f92d
+parameters: setups old/1 new/2, robots 2000,5000, duration 30 s, warm-up 5 s, backlog 200 jobs/robot, 1 repeats, wall limit 600s per setup (0 = none)
+=== 09:44:07 setup old with 1 replica(s) ===
+vm-api-1: old healthy after 2s (pool 50)
+vm-api-2: stopped
+DB check old-1-replica/2000: completed 4113, failed 0, claimed 0, executing 0, queued 395887, other 0, history rows 4113
+DB check old-1-replica/5000: completed 706, failed 0, claimed 7414, executing 1729, queued 990151, other 0, history rows 744
+old-1-replica wall time 186 s
+=== 09:47:36 setup new with 2 replica(s) ===
+vm-api-1: new healthy after 2s (pool 50)
+vm-api-2: new healthy after 2s (pool 50)
+DB check new-2-replica/2000: completed 35575, failed 0, claimed 5, executing 5, queued 364415, other 0, history rows 35575
+DB check new-2-replica/5000: completed 42181, failed 0, claimed 116, executing 101, queued 957602, other 0, history rows 42181
+new-2-replica wall time 123 s
+
+robots version   jobs/s   claim p50/p95/p99 ms started p95 completed p95   429s other fails drained db completed db failed in flight
+  2000 old-1-replica    70.43 11034.62/15646.72/15794.18    13156.35       11362.3      0           0       0         4113         0         0
+  2000 new-2-replica   1093.2     60.38/144.9/200.06       81.66         123.9  54212           0       0        35575         0        10
+  5000 old-1-replica     6.87 49020.93/57573.38/57573.38    59670.53      13361.15      0        3377       0          706         0      9143
+  5000 new-2-replica   1174.5     61.02/92.67/108.22       58.05          91.9 145782           0       0        42181         0       217
+
+jobs/s = completed per second (warm-up excluded). db completed includes warm-up. in flight = Claimed + Executing when the run stopped.
+=== 09:50:05 stress DONE: /home/azureuser/results/stress-20261004-094406 ===
+ALL_DONE

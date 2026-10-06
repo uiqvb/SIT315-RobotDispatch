@@ -1,0 +1,5 @@
+started:      2026-10-03T10:54:37.3228073+00:00
+target:       http://rb-api-old:8080 (label rehearsal-old)
+note:         local Docker rehearsal, every container on one laptop
+load machine: ff5d4e93c208, Debian GNU/Linux 12 (bookworm), 12 logical CPUs
+parameters:   robots=5 duration=10s warmup=2s backlog=1000 jobs/robot repeats=1

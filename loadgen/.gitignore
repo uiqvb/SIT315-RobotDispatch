@@ -1,3 +1,4 @@
 reports/
-results/
+results/azure-scripts/
+!results/**/*.log
 .work/

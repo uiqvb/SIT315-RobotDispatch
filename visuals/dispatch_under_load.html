@@ -1,0 +1,1014 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dispatch Under Load</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--tx:#c9d1d9;--mut:#8b949e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:13px/1.3 system-ui,"Segoe UI",sans-serif}
+header{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+h1{font-size:15px;margin:0 6px 0 0;font-weight:600}
+.grp{display:flex;gap:4px;align-items:center}
+.grp>span{color:var(--mut);font-size:11px;margin-right:4px;text-transform:uppercase;letter-spacing:.05em}
+button{background:#21262d;color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:5px 10px;font:inherit;cursor:pointer}
+button:hover{border-color:#8b949e}
+button.on{background:#1f6feb;border-color:#1f6feb;color:#fff}
+button.old.on{background:#b62324;border-color:#b62324}
+#legend{display:flex;flex-wrap:wrap;gap:12px;padding:7px 16px;color:var(--mut);font-size:11px}
+.chip{display:inline-flex;align-items:center;gap:5px}
+.chip i{width:12px;height:8px;border-radius:1px;display:inline-block}
+#wrap{padding:0 8px}
+canvas{display:block;width:100%}
+.bottom{display:grid;grid-template-columns:1.45fr 1fr;gap:12px;padding:8px 16px 16px}
+.mini{padding:2px 8px;font-size:11px;text-transform:none;letter-spacing:0;margin:0 8px 0 6px}
+.cmpwrap{padding:0 16px 20px}
+.cmphead{display:flex;align-items:center;gap:14px;margin-bottom:6px;color:#8b949e;font-size:12px}
+.cmphead label{display:flex;align-items:center;gap:5px;cursor:pointer}
+.cmpgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.cmpgrid select{width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:5px;font:inherit;margin-bottom:6px}
+.cinfo{font-size:12px;color:#c9d1d9;min-height:34px;margin-bottom:4px}
+@media(max-width:900px){.cmpgrid{grid-template-columns:1fr}}
+.ttip,#ttip{position:absolute;display:none;pointer-events:none;background:#0d1117;border:1px solid #484f58;border-radius:6px;padding:7px 10px;font-size:12px;z-index:5;min-width:180px;max-width:270px;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+#trinfo b{font-variant-numeric:tabular-nums}
+.card{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:6px}
+.tile b{display:block;font-size:21px;font-variant-numeric:tabular-nums}
+.tile small{color:var(--mut);font-size:11px}
+.h{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px}
+.row{display:grid;grid-template-columns:78px 1fr 70px;align-items:center;gap:8px;margin:5px 0;cursor:pointer}
+.bar{height:14px;background:#21262d;border-radius:3px;overflow:hidden}
+.bar div{height:100%;transition:width .5s}
+.row.sel .lbl{color:#fff;font-weight:600}
+.lbl{font-size:12px}
+.num{text-align:right;font-variant-numeric:tabular-nums;font-size:12px}
+#steplog{margin:6px 0 0;padding-left:22px;max-height:170px;overflow:auto;font-size:12px;color:#8b949e}
+#steplog li{margin:2px 0}#steplog li:last-child{color:#fff;font-weight:600}
+button:disabled{cursor:default}
+#sendN{width:64px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:5px 6px;font:inherit}
+.foot{color:var(--mut);font-size:11px;margin-top:8px}
+@media(max-width:900px){.bottom{grid-template-columns:1fr}.tiles{grid-template-columns:repeat(3,1fr)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Robot dispatch under load</h1>
+  <div class="grp"><span>mode</span>
+    <button class="old" data-m="old1">Old · 1 API</button>
+    <button class="old" data-m="old2">Old · 2 APIs</button>
+    <button data-m="new1">New · 1 API</button>
+    <button data-m="new2">New · 2 APIs</button>
+  </div>
+  <div class="grp"><span>load</span>
+    <button data-l="0">Manual</button>
+    <button data-l="6">Light</button>
+    <button data-l="110">Heavy</button>
+    <button data-l="260">Overload</button>
+  </div>
+  <div class="grp"><span>speed</span>
+    <button data-s="0.05">1/20×</button>
+    <button data-s="0.1">1/10×</button>
+    <button data-s="0.2">⅕×</button>
+    <button data-s="0.5">½×</button>
+    <button data-s="1">1×</button>
+  </div>
+  <div class="grp">
+    <button id="pause" title="space">❚❚</button>
+    <button id="reset" title="restart all four">↺</button>
+    <button id="trace">◎ Trace one request</button>
+    <input id="sendN" type="number" min="1" max="2000" value="1" title="how many requests to send at once">
+    <button id="send1" title="key: S">✉ Send</button>
+    <button id="stepb">⏯ Step through one</button>
+    <button id="backb" disabled style="opacity:.4" title="key: ←">◀ Back</button>
+    <button id="nextb" disabled style="opacity:.4" title="key: →">Next ▶</button>
+    <span id="stepno" style="color:#8b949e;font-size:12px"></span>
+  </div>
+</header>
+<div id="legend"></div>
+<div id="wrap"><canvas id="cv"></canvas></div>
+<div class="bottom">
+  <div class="card">
+    <div class="tiles">
+      <div class="tile"><b id="tJobs">0</b><small>jobs/s</small></div>
+      <div class="tile"><b id="tP95">0</b><small>p95 latency (s)</small></div>
+      <div class="tile"><b id="tIn">0</b><small>requests inside API</small></div>
+      <div class="tile"><b id="t429">0</b><small>429 / s</small></div>
+      <div class="tile"><b id="tTO">0</b><small>client gave up / s</small></div>
+    </div>
+    <div class="h">traced request <button id="snapb" class="mini">📷 Save snapshot</button><span id="trinfo" style="text-transform:none;letter-spacing:0;color:#c9d1d9;margin-left:8px"></span></div>
+    <canvas id="tr" height="128"></canvas>
+    <ol id="steplog"></ol>
+  </div>
+  <div class="card">
+    <div class="h">animation · jobs/s right now · same load, all four running</div>
+    <div id="simbars"></div>
+    <div class="h">measured on Azure · 400 robots · median jobs/s</div>
+    <div id="azbars"></div>
+    <div class="foot">Animation = scaled-down model (slowed time, fewer robots). Azure = the real benchmark.
+      Stress run: Old · 1 at 5000 robots finished <b style="color:#f85149">0 jobs</b>; New · 2 held <b style="color:#3fb950">~1008 jobs/s</b> by answering 429.</div>
+  </div>
+</div>
+
+<div class="cmpwrap">
+  <div class="cmphead">
+    <span class="h" style="margin:0">compare snapshots</span>
+    <label><input type="checkbox" id="samescale" checked> same time scale</label>
+    <button id="cmpswap" class="mini">⇄ swap</button>
+    <button id="cmpclear" class="mini">🗑 delete all</button>
+  </div>
+  <div class="cmpgrid">
+    <div class="card"><select id="cmpsel0"></select><div class="cinfo" id="cmpinfo0"></div><canvas id="cmp0" height="128"></canvas></div>
+    <div class="card"><select id="cmpsel1"></select><div class="cinfo" id="cmpinfo1"></div><canvas id="cmp1" height="128"></canvas></div>
+  </div>
+</div>
+
+<script>
+//SIM-START
+const P = {
+  net: 0.45, think: 0.12, cores: 2, dbCores: 8,
+  permits: 64, qlimit: 32, retry: 1.0, pool: 25,
+  tMin: 8, tMax: 36, inject: 0.4, timeout: 15,
+  qGo: 0.08, qBack: 0.08,
+  old: { cpu: [0.04, 0.04, 0.04, 0.04], db: 3, qFix: 0.18, qCpu: 0.14 },
+  new: { cpu: [0.014, 0.013, 0.013], db: 2, qFix: 0.15, qCpu: 0.018 }
+};
+let RID = 0;
+const AT_API = { lq: 1, ready: 1, cpu: 1, wconn: 1, db: 1 };
+
+class Sim {
+  constructor(impl, n, R) {
+    this.impl = impl; this.n = n; this.c = P[impl]; this.t = 0;
+    this.apis = [];
+    for (let i = 0; i < n; i++) {
+      const a = { i, threads: [], active: 0, lq: [], ready: [], pool: new Array(P.pool).fill(null),
+                  pw: [], lastInj: -9, lastRet: 0, hist: [], cpuUse: 0 };
+      for (let k = 0; k < P.tMin; k++) a.threads.push({ id: k, req: null, born: -9 });
+      this.apis.push(a);
+    }
+    this.reqs = []; this.qs = []; this.dbRun = []; this.rr = 0;
+    this.robots = [];
+    for (let r = 0; r < R; r++) this.robots.push({ id: r, step: 'claim-next', wait: Math.random() * 1.5, cur: null });
+    this.jobT = []; this.lat = []; this.rejT = []; this.toT = []; this.dbT = [];
+    this.histT = 0; this.trace = null; this.traceNext = false;
+  }
+  set(q, st) { q.st = st; }
+  send(rb) {
+    const a = this.apis[this.rr++ % this.n];
+    const q = { id: RID++, rb, kind: rb.step, api: a, sent: this.t, st: null, idx: -1, th: null,
+                conn: null, zombie: false, work: 0, t0: this.t, t1: this.t + P.net, vx: null, vy: null };
+    rb.cur = q; this.reqs.push(q);
+    if (this.traceNext) { this.traceNext = false; this.trace = { req: q, s: [], done: false, end: '' }; }
+    this.set(q, 'in');
+  }
+  sendOne() {
+    const rb = { id: this.robots.length, step: 'claim-next', wait: Infinity, cur: null, one: true };
+    this.robots.push(rb); this.send(rb);
+  }
+  arrive(q) {
+    const a = q.api;
+    if (this.impl === 'new') {
+      if (a.active < P.permits) { a.active++; this.admit(q); }
+      else if (a.lq.length < P.qlimit) { a.lq.push(q); this.set(q, 'lq'); }
+      else { this.rejT.push(this.t); q.t0 = this.t; q.t1 = this.t + P.net; this.set(q, 'rej'); }
+    } else this.admit(q);
+  }
+  admit(q) { q.idx = -1; this.next(q); }
+  freeThread(q) { if (q.th) { q.th.req = null; q.th = null; } }
+  next(q) {
+    const c = this.c, a = q.api; q.idx++;
+    if (q.idx >= c.db * 2 + 1) {
+      this.freeThread(q);
+      if (this.impl === 'new') {
+        a.active--;
+        if (a.lq.length) { const w = a.lq.shift(); a.active++; this.admit(w); }
+      }
+      q.t0 = this.t; q.t1 = this.t + P.net; this.set(q, 'out'); return;
+    }
+    if (q.idx % 2 === 0) {
+      q.work = c.cpu[q.idx / 2];
+      if (q.th) this.set(q, 'cpu'); else { a.ready.push(q); this.set(q, 'ready'); }
+    } else {
+      if (this.impl === 'new') this.freeThread(q);   // async: thread goes back while the DB works
+      if (!this.takeConn(q)) { a.pw.push(q); this.set(q, 'wconn'); }
+    }
+  }
+  takeConn(q) {
+    const a = q.api, i = a.pool.indexOf(null);
+    if (i < 0) return false;
+    a.pool[i] = q; q.conn = i;
+    this.qs.push({ q, a, ci: i, st: 'go', t0: this.t, t1: this.t + P.qGo, fix: this.c.qFix, work: this.c.qCpu, start: this.t });
+    this.set(q, 'db'); return true;
+  }
+  deliver(q) {
+    q.st = 'done';
+    const rb = q.rb;
+    if (this.trace && this.trace.req === q) { this.trace.done = true; this.trace.end = 'ok'; }
+    if (!rb || q.zombie) return;
+    this.lat.push([this.t, this.t - q.sent]);
+    rb.cur = null; rb.wait = this.t + P.think;
+    if (rb.one) { rb.wait = Infinity; return; }
+    if (q.kind === 'claim-next') rb.step = 'started';
+    else if (q.kind === 'started') rb.step = Math.random() < 0.05 ? 'failed' : 'completed';
+    else { rb.step = 'claim-next'; this.jobT.push(this.t); }
+  }
+  step(dt) {
+    this.t += dt; const t = this.t;
+    for (const rb of this.robots) {
+      const q = rb.cur;
+      if (!q) { if (t >= rb.wait) this.send(rb); }
+      else if (q.st === 'hold') {
+        if (t >= rb.wait) { q.api = this.apis[this.rr++ % this.n]; q.sent = t; q.t0 = t; q.t1 = t + P.net; this.set(q, 'in'); }
+      } else if (q.st !== 'rej' && t - q.sent > P.timeout) {
+        q.zombie = true; q.rb = null; rb.cur = null; rb.wait = rb.one ? Infinity : t + P.retry; this.toT.push(t);
+        if (this.trace && this.trace.req === q) { this.trace.done = true; this.trace.end = 'gave up'; }
+      }
+    }
+    for (const q of this.reqs) {
+      if (q.st === 'in' && t >= q.t1) this.arrive(q);
+      else if (q.st === 'out' && t >= q.t1) this.deliver(q);
+      else if (q.st === 'rej' && t >= q.t1) {
+        if (q.rb) { this.set(q, 'hold'); q.rb.wait = t + P.retry; } else q.st = 'gone';
+      }
+    }
+    const nr = this.dbRun.length, rate = nr ? Math.min(1, P.dbCores / nr) : 0;
+    for (const x of this.qs) {
+      if (x.st === 'go' && t >= x.t1) { x.st = 'run'; this.dbRun.push(x); }
+      else if (x.st === 'run') {
+        x.fix -= dt; x.work -= rate * dt;
+        if (x.fix <= 0 && x.work <= 0) { x.st = 'back'; x.t0 = t; x.t1 = t + P.qBack; }
+      } else if (x.st === 'back' && t >= x.t1) {
+        x.st = 'end'; this.dbT.push([t, t - x.start]);
+        x.a.pool[x.ci] = null; x.q.conn = null;
+        if (x.a.pw.length) this.takeConn(x.a.pw.shift());
+        this.next(x.q);
+      }
+    }
+    this.qs = this.qs.filter(x => x.st !== 'end');
+    this.dbRun = this.dbRun.filter(x => x.st === 'run');
+    for (const a of this.apis) {
+      let n = 0;
+      for (const th of a.threads) if (th.req && th.req.st === 'cpu') n++;
+      const r = n ? Math.min(1, P.cores / n) : 0;
+      a.cpuUse = Math.min(n, P.cores) / P.cores;
+      for (const th of a.threads) {
+        const q = th.req;
+        if (q && q.st === 'cpu') { q.work -= r * dt; if (q.work <= 0) this.next(q); }
+      }
+      for (const th of a.threads) {
+        if (!th.req && a.ready.length) { const q = a.ready.shift(); th.req = q; q.th = th; this.set(q, 'cpu'); }
+      }
+      const free = a.threads.some(th => !th.req);
+      if (a.ready.length && !free && a.threads.length < P.tMax && t - a.lastInj > P.inject) {
+        a.threads.push({ id: a.threads.length, req: null, born: t }); a.lastInj = t; a.lastRet = t;
+      } else if (!a.ready.length && a.threads.length > P.tMin && !a.threads[a.threads.length - 1].req && t - a.lastRet > 2) {
+        a.threads.pop(); a.lastRet = t;
+      }
+    }
+    if (t - this.histT >= 0.1) {
+      this.histT = t;
+      for (const a of this.apis) {
+        const row = [];
+        for (let k = 0; k < 8; k++) {
+          const th = a.threads[k];
+          if (!th) row.push(0);
+          else if (!th.req) row.push(1);
+          else if (th.req.zombie) row.push(5);
+          else row.push({ cpu: 2, db: 3, wconn: 4 }[th.req.st] || 1);
+        }
+        a.hist.push(row); if (a.hist.length > 120) a.hist.shift();
+      }
+    }
+    if (this.trace && !this.trace.done) {
+      const q = this.trace.req;
+      const nC = q.api.threads.reduce((n, th) => n + (th.req && th.req.st === 'cpu' ? 1 : 0), 0);
+      this.trace.s.push({ t, st: q.st, th: q.th ? q.th.id : null, cpuN: q.st === 'cpu' ? nC : 0 });
+    }
+    this.reqs = this.reqs.filter(q => q.st !== 'done' && q.st !== 'gone');
+    const cut = t - 20;
+    if (this.jobT.length && this.jobT[0] < cut) this.jobT = this.jobT.filter(x => x >= cut);
+    if (this.rejT.length && this.rejT[0] < cut) this.rejT = this.rejT.filter(x => x >= cut);
+    if (this.toT.length && this.toT[0] < cut) this.toT = this.toT.filter(x => x >= cut);
+    if (this.lat.length && this.lat[0][0] < cut) this.lat = this.lat.filter(x => x[0] >= cut);
+    if (this.dbT.length && this.dbT[0][0] < cut) this.dbT = this.dbT.filter(x => x[0] >= cut);
+  }
+  stats() {
+    const W = Math.max(0.5, Math.min(8, this.t)), c = this.t - W, JW = Math.max(0.5, Math.min(20, this.t));
+    const lat = this.lat.filter(x => x[0] >= c).map(x => x[1]).sort((a, b) => a - b);
+    const db = this.dbT.filter(x => x[0] >= c).map(x => x[1]);
+    let inApi = 0; for (const q of this.reqs) if (AT_API[q.st]) inApi++;
+    return {
+      jobs: this.jobT.filter(x => x >= this.t - JW).length / JW,
+      p95: lat.length ? lat[Math.floor(lat.length * 0.95)] : 0,
+      rej: this.rejT.filter(x => x >= c).length / W,
+      to: this.toT.filter(x => x >= c).length / W,
+      inApi, db: db.length ? db.reduce((a, b) => a + b, 0) / db.length : 0
+    };
+  }
+}
+//SIM-END
+
+const MODES = { old1: ['old', 1], old2: ['old', 2], new1: ['new', 1], new2: ['new', 2] };
+const NAMES = { old1: 'Old · 1', old2: 'Old · 2', new1: 'New · 1', new2: 'New · 2' };
+const AZ = { old1: 176.7, old2: 284.2, new1: 607.7, new2: 1069.0 };
+const COL = { in: '#8b9bb4', out: '#3fb950', lq: '#e3b341', hold: '#f85149', rej: '#f85149', ready: '#a371f7',
+              cpu: '#3fb950', wconn: '#f0883e', db: '#58a6ff', zombie: '#6e7681' };
+let mode = 'new1', load = 110, speed = 0.5, paused = false, sims = {};
+
+function reset() { for (const k in MODES) sims[k] = new Sim(MODES[k][0], MODES[k][1], load); }
+reset();
+
+// ---------- layout ----------
+const LW = 1280, LH = 640;
+function inner(b) {
+  const cy = b.y + b.h / 2 - 12;
+  return Object.assign({}, b, {
+    cy, entry: { x: b.x, y: cy },
+    qg: { x: b.x + 16, y: cy - 4 }, gateX: b.x + 124,
+    pile: { x: b.x + 12, y: b.y + 46, w: 136, h: b.h - 116 },
+    thr: { x: b.x + 172, y: cy - 51 },
+    park: { x: b.x + 296, y: b.y + 46, w: 122, h: b.h - 116 },
+    pool: { x: b.x + 450, y: cy - 39 },
+    tl: { x: b.x + 172, y: b.y + b.h - 56, w: b.w - 192, h: 40 }
+  });
+}
+const LAY = {
+  1: { boxes: [inner({ x: 330, y: 92, w: 580, h: 440 })], lb: { x: 228, y: 312 } },
+  2: { boxes: [inner({ x: 330, y: 24, w: 580, h: 288 }), inner({ x: 330, y: 330, w: 580, h: 288 })], lb: { x: 228, y: 320 } }
+};
+const DB = { x: 1020, y: 150, w: 220, h: 330 };
+
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const tr = document.getElementById('tr'), tctx = tr.getContext('2d');
+let K = 1, DPR = 1;
+function resize() {
+  DPR = window.devicePixelRatio || 1;
+  const w = document.getElementById('wrap').clientWidth;
+  K = w / LW; cv.width = w * DPR; cv.height = LH * K * DPR; cv.style.height = LH * K + 'px';
+  const tw = tr.parentElement.clientWidth - 24;
+  tr.width = tw * DPR; tr.height = TH * DPR; tr.style.width = tw + 'px'; tr.style.height = TH + 'px';
+  for (const id of ['cmp0', 'cmp1']) {
+    const c = document.getElementById(id), cw = c.parentElement.clientWidth - 24;
+    c.width = cw * DPR; c.height = TH * DPR; c.style.width = cw + 'px'; c.style.height = TH + 'px';
+  }
+}
+window.addEventListener('resize', resize);
+
+// ---------- drawing helpers ----------
+function env(x, y, col, s = 1, al = 1) {
+  ctx.globalAlpha = al; ctx.fillStyle = col;
+  ctx.fillRect(x - 5 * s, y - 3.5 * s, 10 * s, 7 * s);
+  ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x - 5 * s, y - 3.5 * s); ctx.lineTo(x, y + 0.6 * s); ctx.lineTo(x + 5 * s, y - 3.5 * s); ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+function txt(s, x, y, col = '#8b949e', size = 11, align = 'left', w = 400) {
+  ctx.fillStyle = col; ctx.font = `${w} ${size}px system-ui,Segoe UI,sans-serif`; ctx.textAlign = align; ctx.fillText(s, x, y);
+}
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+function lerpPath(pts, f) {
+  f = Math.max(0, Math.min(1, f));
+  let L = 0; const seg = [];
+  for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y); seg.push(d); L += d; }
+  let d = f * L;
+  for (let i = 0; i < seg.length; i++) {
+    if (d <= seg[i] || i === seg.length - 1) { const u = seg[i] ? d / seg[i] : 0; return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * u, y: pts[i].y + (pts[i + 1].y - pts[i].y) * u }; }
+    d -= seg[i];
+  }
+}
+function nIcons(s) { return load === 0 ? 8 : Math.max(1, Math.min(s.robots.length, 16)); }
+function rY(s, id) { const n = nIcons(s); return n === 1 ? 312 : 70 + (id % n) * (490 / (n - 1)); }
+function inPath(s, q) {
+  const L = LAY[s.n], b = L.boxes[q.api.i], r = { x: 84, y: rY(s, q.rb ? q.rb.id : q.rid || 0) };
+  return s.n === 2 ? [r, L.lb, b.entry] : [r, b.entry];
+}
+function slotPos(b, k) { return { x: b.thr.x + (k % 6) * 17 + 7.5, y: b.thr.y + Math.floor(k / 6) * 17 + 7.5 }; }
+function sockPos(b, i) { return { x: b.pool.x + (i % 5) * 16 + 6.5, y: b.pool.y + Math.floor(i / 5) * 16 + 6.5 }; }
+function dbEntry(s, ai) { return { x: DB.x + 4, y: DB.y + DB.h / 2 + (s.n === 2 ? (ai ? 40 : -40) : 0) }; }
+
+let pulse = 0;
+function draw(dtr) {
+  pulse += dtr;
+  const s = sims[mode], L = LAY[s.n], isNew = s.impl === 'new';
+  ctx.setTransform(K * DPR, 0, 0, K * DPR, 0, 0);
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, LW, LH);
+  ctx.fillStyle = '#161b22';
+  for (let x = 10; x < LW; x += 20) for (let y = 10; y < LH; y += 20) ctx.fillRect(x, y, 1.2, 1.2);
+
+  // links
+  ctx.lineWidth = 2;
+  const nI = nIcons(s);
+  for (let i = 0; i < nI; i++) {
+    const y = rY(s, i);
+    ctx.strokeStyle = '#21262d'; ctx.beginPath(); ctx.moveTo(84, y);
+    if (s.n === 2) ctx.lineTo(L.lb.x, L.lb.y); else ctx.lineTo(L.boxes[0].entry.x, L.boxes[0].entry.y);
+    ctx.stroke();
+  }
+  if (s.n === 2) for (const b of L.boxes) { ctx.strokeStyle = '#30363d'; ctx.beginPath(); ctx.moveTo(L.lb.x, L.lb.y); ctx.lineTo(b.entry.x, b.entry.y); ctx.stroke(); }
+  L.boxes.forEach((b, i) => {
+    const used = s.apis[i].pool.filter(Boolean).length;
+    ctx.strokeStyle = `rgba(88,166,255,${0.15 + 0.6 * used / P.pool})`; ctx.lineWidth = 1 + 3 * used / P.pool;
+    const e = dbEntry(s, i); ctx.beginPath(); ctx.moveTo(b.pool.x + 80, b.pool.y + 40); ctx.lineTo(e.x, e.y); ctx.stroke();
+  });
+
+  // robots
+  for (let i = 0; i < nI; i++) {
+    const y = rY(s, i);
+    ctx.fillStyle = '#30363d'; rr(46, y - 9, 26, 18, 4); ctx.fill();
+    ctx.strokeStyle = '#6e7681'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(59, y - 9); ctx.lineTo(59, y - 14); ctx.stroke();
+    ctx.fillStyle = '#58a6ff'; ctx.fillRect(52, y - 3, 4, 4); ctx.fillRect(62, y - 3, 4, 4);
+  }
+  txt('ROBOTS', 59, 26, '#8b949e', 11, 'center', 600);
+  txt(load === 0 ? 'manual · ' + s.robots.length + ' sent' : '× ' + s.robots.length, 59, 42, '#c9d1d9', 13, 'center', 600);
+  if (isNew) { txt('⏱ retry 1 s', 150, 610, '#f85149', 11, 'center'); }
+
+  // load balancer
+  const lbA = s.n === 2 ? 1 : 0.18;
+  ctx.globalAlpha = lbA;
+  ctx.fillStyle = '#0d2a4a'; ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(L.lb.x, L.lb.y, 24, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = '#c9d1d9'; ctx.lineWidth = 2;
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    ctx.beginPath(); ctx.moveTo(L.lb.x + dx * 5, L.lb.y + dy * 5); ctx.lineTo(L.lb.x + dx * 15, L.lb.y + dy * 15); ctx.stroke();
+    ctx.beginPath(); ctx.arc(L.lb.x + dx * 15, L.lb.y + dy * 15, 2, 0, 7); ctx.fillStyle = '#c9d1d9'; ctx.fill();
+  }
+  txt(s.n === 2 ? 'LOAD BALANCER' : 'no LB', L.lb.x, L.lb.y + 42, '#8b949e', 10, 'center', 600);
+  ctx.globalAlpha = 1;
+
+  // group requests per api
+  const G = s.apis.map(() => ({ ready: [], park: [] }));
+  for (const q of s.reqs) {
+    const g = G[q.api.i];
+    if (q.st === 'ready') (isNew ? g.park : g.ready).push(q);
+    else if (isNew && (q.st === 'db' || q.st === 'wconn')) g.park.push(q);
+  }
+  for (const g of G) g.park.sort((a, b) => ({ db: 0, wconn: 1, ready: 2 }[a.st] - { db: 0, wconn: 1, ready: 2 }[b.st]));
+
+  // API boxes
+  L.boxes.forEach((b, i) => {
+    const a = s.apis[i], g = G[i];
+    ctx.fillStyle = '#11161d'; ctx.strokeStyle = isNew ? '#1f6feb' : '#b62324'; ctx.lineWidth = 1.5;
+    rr(b.x, b.y, b.w, b.h, 10); ctx.fill(); ctx.stroke();
+    txt('API ' + (i + 1), b.x + 12, b.y + 20, '#c9d1d9', 13, 'left', 700);
+    txt(isNew ? 'async' : 'sync', b.x + 62, b.y + 20, isNew ? '#58a6ff' : '#f85149', 11, 'left', 600);
+    // CPU cores: every thread running code shares these
+    {
+      const run = a.threads.filter(th => th.req && th.req.st === 'cpu');
+      const nC = run.length, over = nC > P.cores, cy0 = b.y + 8;
+      run.forEach((th, k) => {
+        const sp = slotPos(b, th.id), cx = b.x + 172 + (k % P.cores) * 56 + 25;
+        ctx.strokeStyle = over ? 'rgba(248,81,73,.45)' : 'rgba(63,185,80,.5)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(sp.x, sp.y - 7); ctx.lineTo(cx, cy0 + 24); ctx.stroke();
+      });
+      for (let c = 0; c < P.cores; c++) {
+        const cx = b.x + 172 + c * 56;
+        ctx.fillStyle = '#0d1117'; ctx.strokeStyle = over ? '#f85149' : nC > c ? '#3fb950' : '#484f58'; ctx.lineWidth = 1.5;
+        rr(cx, cy0, 50, 24, 4); ctx.fill(); ctx.stroke();
+        const on = Math.floor(nC / P.cores) + (c < nC % P.cores ? 1 : 0);
+        for (let k = 0; k < on; k++) {
+          const sw = 44 / on;
+          ctx.fillStyle = k % 2 ? '#2ea043' : '#3fb950'; ctx.fillRect(cx + 3 + k * sw, cy0 + 3, Math.max(1, sw - 1), 18);
+        }
+        if (!on) txt('idle', cx + 25, cy0 + 16, '#484f58', 10, 'center');
+      }
+      txt(`${P.cores} CPU cores`, b.x + 292, cy0 + 8, '#c9d1d9', 11, 'left', 700);
+      txt(nC === 0 ? 'no thread running code' : `${nC} thread${nC > 1 ? 's' : ''} want CPU → ` + (over ? `each runs at ${Math.round(P.cores / nC * 100)}% speed` : 'full speed'),
+          b.x + 292, cy0 + 21, over ? '#f85149' : '#3fb950', 11, 'left', 600);
+    }
+
+    // zone A
+    if (isNew) {
+      txt('WAITING', b.qg.x, b.qg.y - 14, '#e3b341', 10, 'left', 600);
+      txt(a.lq.length + '/32', b.qg.x + 92, b.qg.y - 14, '#e3b341', 12, 'right', 700);
+      for (let k = 0; k < 32; k++) {
+        ctx.strokeStyle = '#2d333b'; ctx.lineWidth = 1;
+        ctx.strokeRect(b.qg.x + (k % 8) * 12 - 0.5, b.qg.y + Math.floor(k / 8) * 10 - 0.5, 11, 9);
+      }
+      const full = a.active >= P.permits;
+      ctx.fillStyle = '#6e7681'; ctx.fillRect(b.gateX - 2, b.cy - 50, 5, 100);
+      ctx.fillStyle = full ? '#f85149' : '#3fb950'; ctx.fillRect(b.gateX - 6, b.cy - 50, 13, 6); ctx.fillRect(b.gateX - 6, b.cy + 44, 13, 6);
+      ctx.fillStyle = full ? 'rgba(248,81,73,.25)' : 'rgba(63,185,80,.18)'; ctx.fillRect(b.gateX - 2, b.cy - 44, 5, 88);
+      txt('ACTIVE', b.gateX, b.cy - 72, full ? '#f85149' : '#3fb950', 10, 'center', 600);
+      txt(a.active + '/64', b.gateX, b.cy - 57, full ? '#f85149' : '#3fb950', 13, 'center', 700);
+      const pm = Math.min(1, a.active / P.permits);
+      ctx.fillStyle = '#21262d'; ctx.fillRect(b.gateX + 8, b.cy - 44, 5, 88);
+      ctx.fillStyle = full ? '#f85149' : '#3fb950'; ctx.fillRect(b.gateX + 8, b.cy + 44 - 88 * pm, 5, 88 * pm);
+      ctx.setLineDash([4, 4]); ctx.strokeStyle = 'rgba(248,81,73,.45)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(b.qg.x, b.cy + 40); ctx.quadraticCurveTo(b.x - 40, b.cy + 90, 175, b.cy + 60); ctx.stroke(); ctx.setLineDash([]);
+      txt('429', b.x - 40, b.cy + 92, '#f85149', 12, 'center', 700);
+    } else {
+      txt('IN-FLIGHT', b.pile.x, b.pile.y - 6, '#f85149', 10, 'left', 600);
+      const tot = s.reqs.filter(q => q.api === a && AT_API[q.st]).length;
+      txt(String(tot), b.pile.x + b.pile.w, b.pile.y - 6, '#f85149', 14, 'right', 700);
+      ctx.strokeStyle = '#2d333b'; ctx.setLineDash([3, 3]); ctx.strokeRect(b.pile.x, b.pile.y, b.pile.w, b.pile.h); ctx.setLineDash([]);
+      const cap = 11 * Math.floor(b.pile.h / 10);
+      if (g.ready.length > cap) txt('+' + (g.ready.length - cap), b.pile.x + b.pile.w - 4, b.pile.y + b.pile.h - 4, '#f85149', 12, 'right', 700);
+      const fill = Math.min(1, g.ready.length / cap);
+      ctx.fillStyle = `rgba(248,81,73,${0.05 + 0.15 * fill})`; ctx.fillRect(b.pile.x, b.pile.y + b.pile.h * (1 - fill), b.pile.w, b.pile.h * fill);
+    }
+
+    // threads
+    txt('THREADS', b.thr.x, b.thr.y - 8, '#8b949e', 10, 'left', 600);
+    txt(String(a.threads.length), b.thr.x + 100, b.thr.y - 8, '#c9d1d9', 12, 'right', 700);
+    for (let k = 0; k < 36; k++) {
+      const p = slotPos(b, k), th = a.threads[k];
+      if (!th) { ctx.strokeStyle = '#21262d'; ctx.setLineDash([2, 2]); ctx.strokeRect(p.x - 7, p.y - 7, 14, 14); ctx.setLineDash([]); continue; }
+      const q = th.req;
+      let col = null;
+      if (q) col = q.zombie ? '#6e7681' : q.st === 'cpu' ? '#3fb950' : q.st === 'db' ? '#f85149' : q.st === 'wconn' ? '#f0883e' : '#3fb950';
+      if (col) { ctx.fillStyle = col; ctx.globalAlpha = 0.85; ctx.fillRect(p.x - 7, p.y - 7, 14, 14); ctx.globalAlpha = 1; }
+      ctx.strokeStyle = s.t - th.born < 0.6 ? '#fff' : '#3fb950'; ctx.lineWidth = s.t - th.born < 0.6 ? 2 : 1;
+      ctx.strokeRect(p.x - 7, p.y - 7, 14, 14);
+      if (q && !q.zombie && (q.st === 'db' || q.st === 'wconn')) {
+        ctx.fillStyle = '#fff'; ctx.fillRect(p.x - 2.5, p.y - 1, 5, 4); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(p.x, p.y - 1.5, 2, Math.PI, 0); ctx.stroke();
+      }
+    }
+
+    // park zone
+    if (isNew) {
+      txt('PARKED · no thread', b.park.x, b.park.y - 6, '#58a6ff', 10, 'left', 600);
+      ctx.strokeStyle = '#1f3a5f'; ctx.setLineDash([3, 3]); ctx.strokeRect(b.park.x, b.park.y, b.park.w, b.park.h); ctx.setLineDash([]);
+    } else {
+      ctx.strokeStyle = '#21262d'; ctx.setLineDash([3, 3]); ctx.strokeRect(b.park.x, b.park.y, b.park.w, b.park.h); ctx.setLineDash([]);
+      ctx.strokeStyle = '#30363d'; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.moveTo(b.park.x + 8, b.park.y + 8); ctx.lineTo(b.park.x + b.park.w - 8, b.park.y + b.park.h - 8); ctx.stroke();
+      txt('no parking', b.park.x + b.park.w / 2, b.park.y + b.park.h / 2 - 6, '#6e7681', 11, 'center', 600);
+      txt('thread stays stuck', b.park.x + b.park.w / 2, b.park.y + b.park.h / 2 + 10, '#6e7681', 10, 'center');
+    }
+
+    // pool
+    const used = a.pool.filter(Boolean).length;
+    txt('POOL', b.pool.x, b.pool.y - 8, '#8b949e', 10, 'left', 600);
+    txt(used + '/25', b.pool.x + 78, b.pool.y - 8, used >= 25 ? '#f0883e' : '#c9d1d9', 12, 'right', 700);
+    for (let k = 0; k < 25; k++) {
+      const p = sockPos(b, k), q = a.pool[k];
+      ctx.fillStyle = q ? (q.zombie ? '#6e7681' : '#58a6ff') : '#0d1117';
+      ctx.fillRect(p.x - 6.5, p.y - 6.5, 13, 13);
+      ctx.strokeStyle = q ? '#a5d6ff' : '#30363d'; ctx.lineWidth = 1; ctx.strokeRect(p.x - 6.5, p.y - 6.5, 13, 13);
+    }
+    if (a.pw.length) txt('waiting: ' + a.pw.length, b.pool.x + 40, b.pool.y + 98, '#f0883e', 11, 'center', 700);
+
+    // thread timeline
+    const tl = b.tl;
+    txt('thread time →', tl.x - 8, tl.y + 24, '#6e7681', 10, 'right');
+    const cw = tl.w / 120;
+    a.hist.forEach((row, x) => {
+      row.forEach((v, r) => {
+        if (!v) return;
+        ctx.fillStyle = ['', '#1c2128', '#3fb950', '#f85149', '#f0883e', '#6e7681'][v];
+        ctx.fillRect(tl.x + (120 - a.hist.length + x) * cw, tl.y + r * 5, cw + 0.3, 4);
+      });
+    });
+  });
+
+  // database
+  ctx.fillStyle = '#10243c'; ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(DB.x + DB.w / 2, DB.y + DB.h, DB.w / 2, 18, 0, 0, Math.PI); ctx.lineTo(DB.x, DB.y);
+  ctx.ellipse(DB.x + DB.w / 2, DB.y, DB.w / 2, 18, 0, Math.PI, 0, true); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(DB.x + DB.w / 2, DB.y, DB.w / 2, 18, 0, 0, 7); ctx.fillStyle = '#163556'; ctx.fill(); ctx.stroke();
+  txt('PostgreSQL', DB.x + DB.w / 2, DB.y + 5, '#c9d1d9', 13, 'center', 700);
+  txt('one shared DB', DB.x + DB.w / 2, DB.y + 40, '#8b949e', 10, 'center');
+  const nr = s.dbRun.length, util = Math.min(1, nr / P.dbCores);
+  for (let c = 0; c < 8; c++) {
+    const x = DB.x + 22 + c * 23;
+    ctx.fillStyle = '#0d1117'; ctx.fillRect(x, DB.y + 54, 16, 26);
+    const u = Math.max(0, Math.min(1, nr / 1 - c));
+    ctx.fillStyle = '#58a6ff'; ctx.fillRect(x, DB.y + 80 - 26 * Math.min(1, u), 16, 26 * Math.min(1, u));
+  }
+  txt('8 vCPU', DB.x + DB.w / 2, DB.y + 94, '#8b949e', 10, 'center');
+  // DB time per query across modes
+  txt('time per query', DB.x + DB.w / 2, DB.y + DB.h - 80, '#8b949e', 10, 'center', 600);
+  Object.keys(MODES).forEach((k, j) => {
+    const st = sims[k].stats(), y = DB.y + DB.h - 68 + j * 14;
+    txt(NAMES[k], DB.x + 62, y + 8, k === mode ? '#fff' : '#8b949e', 10, 'right', k === mode ? 700 : 400);
+    ctx.fillStyle = '#21262d'; ctx.fillRect(DB.x + 68, y, 110, 9);
+    ctx.fillStyle = k.startsWith('old') ? '#f85149' : '#58a6ff'; ctx.fillRect(DB.x + 68, y, Math.min(110, st.db / 0.6 * 110), 9);
+    txt(st.db ? st.db.toFixed(2) + 's' : '', DB.x + 182, y + 8, '#8b949e', 9);
+  });
+
+  // query dots
+  let ri = 0;
+  for (const x of s.qs) {
+    const b = L.boxes[x.a.i], sp = sockPos(b, x.ci), e = dbEntry(s, x.a.i);
+    let p;
+    if (x.st === 'go') p = lerpPath([sp, e], (s.t - x.t0) / P.qGo);
+    else if (x.st === 'back') p = lerpPath([e, sp], (s.t - x.t0) / P.qBack);
+    else { p = { x: DB.x + 30 + (ri % 9) * 19, y: DB.y + 118 + Math.floor(ri / 9) * 13 }; ri++; }
+    if (p.y > DB.y + DB.h - 90) continue;
+    ctx.fillStyle = x.q.zombie ? '#6e7681' : x.st === 'back' ? '#a5d6ff' : '#58a6ff';
+    ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, 7); ctx.fill();
+  }
+
+  // envelopes
+  const k = Math.min(1, dtr * 12);
+  const trq = s.trace && !s.trace.done ? s.trace.req : null;
+  let trp = null;
+  for (const q of s.reqs) {
+    const b = L.boxes[q.api.i];
+    if (q.rb) q.rid = q.rb.id;
+    let p, col = q.zombie ? COL.zombie : COL[q.st] || '#fff', small = false, direct = false, al = q.zombie ? 0.7 : 1;
+    if (q.st === 'in') { p = lerpPath(inPath(s, q), (s.t - q.t0) / (q.t1 - q.t0)); direct = true; }
+    else if (q.st === 'out') { p = lerpPath(inPath(s, q).reverse(), (s.t - q.t0) / (q.t1 - q.t0)); direct = true; small = true; }
+    else if (q.st === 'rej') {
+      const ry = rY(s, q.rid || 0);
+      p = lerpPath([{ x: b.gateX - 8, y: b.cy }, { x: b.qg.x, y: b.cy + 40 }, { x: b.x - 40, y: b.cy + 80 }, { x: 160, y: ry }], (s.t - q.t0) / (q.t1 - q.t0)); direct = true;
+    } else if (q.st === 'hold') {
+      const ry = rY(s, q.rid || 0);
+      p = { x: 120 + (q.id * 7 % 6) * 9, y: ry + ((q.id * 13) % 7 - 3) * 2.5 };
+    } else if (q.th) p = slotPos(b, q.th.id);
+    else if (q.st === 'lq') { const i = q.api.lq.indexOf(q); p = { x: b.qg.x + (7 - i % 8) * 12 + 5, y: b.qg.y + Math.floor(i / 8) * 10 + 4 }; }
+    else if (q.st === 'ready' && !isNew) {
+      const i = G[q.api.i].ready.indexOf(q), cap = 11 * Math.floor(b.pile.h / 10);
+      if (i >= cap) continue;
+      p = { x: b.pile.x + 7 + (i % 11) * 12, y: b.pile.y + b.pile.h - 6 - Math.floor(i / 11) * 10 };
+    } else {
+      const i = G[q.api.i].park.indexOf(q), cap = 10 * Math.floor(b.park.h / 10);
+      if (i < 0 || i >= cap) continue;
+      p = { x: b.park.x + 7 + (i % 10) * 12, y: b.park.y + 7 + Math.floor(i / 10) * 10 };
+    }
+    if (direct || q.vx === null) { q.vx = p.x; q.vy = p.y; }
+    else { q.vx += (p.x - q.vx) * k; q.vy += (p.y - q.vy) * k; }
+    if (q.conn !== null && q.st === 'db') {
+      const sp = sockPos(b, q.conn);
+      ctx.strokeStyle = q.th ? 'rgba(248,81,73,.55)' : 'rgba(88,166,255,.35)'; ctx.lineWidth = q.th ? 1.5 : 1;
+      ctx.beginPath(); ctx.moveTo(q.vx, q.vy); ctx.lineTo(sp.x, sp.y); ctx.stroke();
+    }
+    if (small) { ctx.globalAlpha = q.zombie ? 0.4 : 1; ctx.fillStyle = q.zombie ? '#6e7681' : COL.out; ctx.beginPath(); ctx.arc(q.vx, q.vy, 3, 0, 7); ctx.fill(); ctx.globalAlpha = 1; }
+    else env(q.vx, q.vy, col, q.st === 'cpu' || q.th ? 0.8 : 1, al);
+    if (q.st === 'hold' && !q.zombie && q.rb) {
+      const f = 1 - Math.max(0, q.rb.wait - s.t) / P.retry;
+      ctx.strokeStyle = '#f85149'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(q.vx, q.vy, 8, -Math.PI / 2, -Math.PI / 2 + f * 6.283); ctx.stroke();
+    }
+    if (q === trq) trp = { x: q.vx, y: q.vy };
+  }
+  if (trp) {
+    const r = 12 + 4 * Math.sin(pulse * 6);
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(trp.x, trp.y, r, 0, 7); ctx.stroke();
+  }
+  if (stepMode && lastMsg) {
+    ctx.font = '600 13px system-ui,Segoe UI,sans-serif';
+    const tw = Math.min(760, ctx.measureText(lastMsg).width) + 20;
+    let bx = trp ? trp.x - tw / 2 : LW / 2 - tw / 2, by = trp ? trp.y - 46 : 4;
+    bx = Math.max(4, Math.min(LW - tw - 4, bx)); by = Math.max(4, by);
+    ctx.fillStyle = 'rgba(13,17,23,.92)'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
+    rr(bx, by, tw, 26, 6); ctx.fill(); ctx.stroke();
+    if (trp) { ctx.beginPath(); ctx.moveTo(trp.x, by + 26); ctx.lineTo(trp.x, trp.y - 14); ctx.stroke(); }
+    txt(lastMsg, bx + 10, by + 18, '#ffffff', 13, 'left', 600);
+    if (waitNext) txt('press Next ▶ or →', bx + tw, by + 40, '#8b949e', 11, 'right');
+  }
+
+  // zombies note
+  const z = s.reqs.filter(q => q.zombie && AT_API[q.st]).length;
+  if (z) txt('abandoned but still being worked on: ' + z, 620, LH - 6, '#6e7681', 12, 'center', 600);
+}
+
+// ---------- trace strip ----------
+const TH = 128, STN = { in: 'network: robot → API', out: 'network: API → robot', lq: 'waiting at limiter', ready: 'waiting for a thread',
+  cpu: 'running code on a thread', wconn: 'waiting for a DB connection', db: 'DB query (connection borrowed)', rej: '429 going back', hold: 'Retry-After wait' };
+const ms = x => Math.round(x * 1000).toLocaleString() + ' ms';
+function niceStep(span) {
+  const raw = span / 8, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (raw <= m * p) return m * p;
+  return 10 * p;
+}
+function segments(S) {
+  const out = [];
+  for (let i = 0; i < S.length - 1; i++) {
+    const a = S[i], L = out[out.length - 1];
+    if (L && L.st === a.st && L.th === a.th) L.t1 = S[i + 1].t;
+    else out.push({ st: a.st, th: a.th, t0: a.t, t1: S[i + 1].t, cpuN: a.cpuN || 0 });
+  }
+  return out;
+}
+function liveTL(T) {
+  if (!T || T.s.length < 2) return null;
+  return { segs: segments(T.s), t0: T.s[0].t, tE: T.s[T.s.length - 1].t, end: T.end, done: T.done };
+}
+function tlSpan(tl) { return tl ? Math.max(0.05, tl.tE - tl.t0) : 0; }
+
+// draws one timeline into a view {cv, ctx, segs, hover, info}
+function drawTL(view, tl, span, emptyMsg) {
+  const W = view.cv.width / DPR, H = TH, c = view.ctx;
+  c.setTransform(DPR, 0, 0, DPR, 0, 0); c.fillStyle = '#161b22'; c.fillRect(0, 0, W, H);
+  c.font = '11px system-ui,Segoe UI,sans-serif';
+  view.segs = [];
+  if (!tl) {
+    c.fillStyle = '#8b949e'; c.textAlign = 'left'; c.fillText(emptyMsg, 10, 50);
+    if (view.info) view.info.innerHTML = ''; return;
+  }
+  const t0 = tl.t0, real = tlSpan(tl); span = Math.max(span || 0, real);
+  const x0 = 84, w = W - x0 - 20, X = t => x0 + (t - t0) / span * w;
+  const R1 = { y: 10, h: 26 }, R2 = { y: 50, h: 18 }, AX = 84;
+  c.textAlign = 'right'; c.fillStyle = '#c9d1d9';
+  c.fillText('request', x0 - 10, R1.y + 17); c.fillText('its thread', x0 - 10, R2.y + 13);
+  c.fillStyle = '#0d1117'; c.fillRect(x0, R1.y, w, R1.h); c.fillRect(x0, R2.y, w, R2.h);
+  const sum = { net: 0, wait: 0, cpu: 0, db: 0 }; let dbw = 0, held = 0;
+  for (const g of tl.segs) {
+    const d = g.t1 - g.t0, xa = X(g.t0), xb = X(g.t1), sw = Math.max(1, xb - xa);
+    if (g.st === 'in' || g.st === 'out' || g.st === 'rej') sum.net += d;
+    else if (g.st === 'cpu') sum.cpu += d; else if (g.st === 'db') sum.db += d; else sum.wait += d;
+    const gcol = g.st === 'out' ? COL.in : COL[g.st] || '#30363d';
+    c.fillStyle = gcol; c.fillRect(xa, R1.y, sw, R1.h);
+    c.strokeStyle = '#161b22'; c.lineWidth = 1; c.strokeRect(xa, R1.y, sw, R1.h);
+    const lab = Math.round(d * 1000) + ' ms';
+    c.font = '600 11px system-ui,Segoe UI,sans-serif'; c.textAlign = 'center';
+    if (c.measureText(lab).width + 8 < sw) { c.fillStyle = '#0d1117'; c.fillText(lab, (xa + xb) / 2, R1.y + 17); }
+    let title = STN[g.st] || g.st;
+    if (g.st === 'cpu' && g.cpuN) title += ` (${g.cpuN} threads sharing ${P.cores} cores)`;
+    view.segs.push({ x0: xa, x1: xa + sw, y0: R1.y, y1: R1.y + R1.h, title, t0: g.t0 - t0, t1: g.t1 - t0, col: gcol });
+    if (AT_API[g.st]) {
+      const isDb = g.st === 'db' || g.st === 'wconn';
+      if (isDb) { dbw += d; if (g.th !== null) held += d; }
+      let col = null, tt = null;
+      if (g.th !== null) { col = g.st === 'cpu' ? '#3fb950' : '#f85149'; tt = g.st === 'cpu' ? `thread T${g.th}: running this request` : `thread T${g.th}: held, BLOCKED waiting on the DB`; }
+      else if (isDb) { col = '#2d333b'; tt = 'no thread held (free for other requests)'; }
+      if (col) {
+        c.fillStyle = col; c.fillRect(xa, R2.y, sw, R2.h);
+        const tl2 = g.th !== null ? 'T' + g.th : 'free';
+        c.font = '600 10px system-ui,Segoe UI,sans-serif';
+        if (c.measureText(tl2).width + 6 < sw) { c.fillStyle = g.th !== null ? '#0d1117' : '#8b949e'; c.fillText(tl2, (xa + xb) / 2, R2.y + 13); }
+        view.segs.push({ x0: xa, x1: xa + sw, y0: R2.y, y1: R2.y + R2.h, title: tt, t0: g.t0 - t0, t1: g.t1 - t0, col });
+      }
+    }
+  }
+  if (view.hover) {
+    const h = hitSeg(view);
+    if (h) { c.strokeStyle = '#fff'; c.lineWidth = 2; c.strokeRect(h.x0, h.y0, h.x1 - h.x0, h.y1 - h.y0); }
+  }
+  c.strokeStyle = '#484f58'; c.lineWidth = 1; c.beginPath(); c.moveTo(x0, AX); c.lineTo(x0 + w, AX); c.stroke();
+  const st = niceStep(span); c.font = '11px system-ui,Segoe UI,sans-serif'; c.textAlign = 'center';
+  const xe = X(t0 + real);
+  for (let t = 0; t <= span + 1e-9; t += st) {
+    const x = X(t0 + t);
+    c.fillStyle = '#21262d'; c.fillRect(x, R2.y + R2.h, 1, AX - R2.y - R2.h);
+    c.fillStyle = '#8b949e'; c.fillRect(x, AX, 1, 5);
+    if (Math.abs(x - xe) > 60) c.fillText(Math.round(t * 1000).toLocaleString(), x, AX + 17);
+  }
+  c.fillStyle = '#e6edf3'; c.fillRect(xe, AX - 4, 1.5, 9);
+  c.textAlign = xe > x0 + w - 40 ? 'right' : 'center'; c.font = '600 11px system-ui,Segoe UI,sans-serif';
+  c.fillText(Math.round(real * 1000).toLocaleString() + ' ms', xe + (c.textAlign === 'right' ? 2 : 0), AX + 17);
+  c.textAlign = 'left'; c.fillStyle = '#6e7681'; c.font = '10px system-ui,Segoe UI,sans-serif'; c.fillText('ms', x0 - 22, AX + 17);
+  c.fillText('hover a block for its exact time · model time (slowed down), not Azure time', x0, AX + 36);
+  if (!view.info) return;
+  const pct = dbw ? Math.round(held / dbw * 100) : null;
+  const chip = (l, v, col) => `<span style="margin-left:10px;white-space:nowrap"><i style="display:inline-block;width:9px;height:9px;background:${col};margin-right:4px;border-radius:1px"></i>${l} <b>${ms(v)}</b></span>`;
+  view.info.innerHTML = `total <b style="color:#fff">${ms(real)}</b>` +
+    chip('network', sum.net, COL.in) + chip('waiting', sum.wait, COL.ready) + chip('CPU', sum.cpu, COL.cpu) + chip('DB', sum.db, COL.db) +
+    (pct === null ? '' : ` <span style="margin-left:12px;white-space:nowrap">thread held during DB wait: <b style="color:${pct > 60 ? '#f85149' : '#3fb950'}">${pct}%</b></span>`) +
+    (tl.end === 'gave up' ? ' · <b style="color:#8b949e">robot gave up</b>' : tl.done ? '' : ' · <span style="color:#e3b341">in progress</span>');
+}
+function hitSeg(v) { const m = v.hover; return m && v.segs.find(g => m.x >= g.x0 && m.x <= g.x1 && m.y >= g.y0 - 2 && m.y <= g.y1 + 2); }
+function hookHover(view) {
+  const card = view.cv.parentElement, tip = document.createElement('div');
+  tip.className = 'ttip'; card.appendChild(tip);
+  view.cv.addEventListener('mousemove', e => {
+    const r = view.cv.getBoundingClientRect(); view.hover = { x: e.clientX - r.left, y: e.clientY - r.top };
+    const h = hitSeg(view);
+    if (!h) { tip.style.display = 'none'; return; }
+    tip.innerHTML = `<div style="display:flex;align-items:center;gap:6px;font-weight:600"><i style="width:10px;height:10px;background:${h.col};display:inline-block;border-radius:2px;flex:none"></i>${h.title}</div>` +
+      `<div style="font-size:18px;font-weight:700;margin:3px 0">${ms(h.t1 - h.t0)}</div>` +
+      `<div style="color:#8b949e">from ${ms(h.t0)} to ${ms(h.t1)}</div>`;
+    tip.style.display = 'block';
+    const cr = card.getBoundingClientRect();
+    let lx = e.clientX - cr.left + 14; if (lx + 260 > cr.width) lx = Math.max(4, e.clientX - cr.left - 270);
+    tip.style.left = lx + 'px'; tip.style.top = (e.clientY - cr.top + 14) + 'px';
+  });
+  view.cv.addEventListener('mouseleave', () => { view.hover = null; tip.style.display = 'none'; });
+}
+
+// live trace view
+const LV = { cv: tr, ctx: tctx, segs: [], hover: null, info: document.getElementById('trinfo') };
+hookHover(LV);
+function drawTrace() {
+  const s = sims[mode];
+  drawTL(LV, liveTL(s.trace), 0, s.trace || s.traceNext ? 'waiting for the next request to leave a robot…' : 'press  ◎ Trace one request  to follow one envelope from robot back to robot');
+}
+
+// snapshots
+const LOADN = { 0: 'Manual', 6: 'Light', 110: 'Heavy', 260: 'Overload' };
+let SNAPS = [];
+try { SNAPS = JSON.parse(localStorage.getItem('dispatch-snaps-v1') || '[]'); } catch (e) { SNAPS = []; }
+function saveSnaps() { try { localStorage.setItem('dispatch-snaps-v1', JSON.stringify(SNAPS)); } catch (e) {} }
+const CV = [0, 1].map(i => {
+  const cv = document.getElementById('cmp' + i);
+  return { cv, ctx: cv.getContext('2d'), segs: [], hover: null, info: document.getElementById('cmpinfo' + i), sel: document.getElementById('cmpsel' + i) };
+});
+CV.forEach(hookHover);
+function fillSelects() {
+  for (const v of CV) {
+    const keep = v.sel.value;
+    v.sel.innerHTML = '<option value="">choose a snapshot…</option>' +
+      SNAPS.slice().reverse().map(x => `<option value="${x.id}">${x.name}</option>`).join('');
+    if (SNAPS.some(x => String(x.id) === keep)) v.sel.value = keep;
+  }
+}
+function snapById(id) { return SNAPS.find(x => String(x.id) === id) || null; }
+function drawCompare() {
+  const a = CV.map(v => snapById(v.sel.value));
+  const same = document.getElementById('samescale').checked;
+  const span = same ? Math.max(tlSpan(a[0] && a[0].tl), tlSpan(a[1] && a[1].tl)) : 0;
+  CV.forEach((v, i) => drawTL(v, a[i] && a[i].tl, span, SNAPS.length ? 'choose a snapshot above' : 'no snapshots yet · trace a request, then press 📷 Save snapshot'));
+}
+document.getElementById('snapb').onclick = () => {
+  const b = document.getElementById('snapb'), tl = liveTL(sims[mode].trace);
+  if (!tl) { b.textContent = 'nothing traced yet'; setTimeout(() => b.textContent = '📷 Save snapshot', 1200); return; }
+  const id = Date.now(), n = SNAPS.length + 1;
+  SNAPS.push({ id, name: `#${n} ${NAMES[mode]} · ${LOADN[load] || load} · ${ms(tlSpan(tl))}${tl.done ? '' : ' (in progress)'}`, tl: JSON.parse(JSON.stringify(tl)) });
+  saveSnaps(); fillSelects();
+  if (!CV[0].sel.value) CV[0].sel.value = id; else CV[1].sel.value = id;
+  b.textContent = '✓ saved #' + n; setTimeout(() => b.textContent = '📷 Save snapshot', 1200);
+};
+document.getElementById('cmpclear').onclick = () => { if (!SNAPS.length || !confirm('Delete all saved snapshots?')) return; SNAPS = []; saveSnaps(); fillSelects(); };
+document.getElementById('cmpswap').onclick = () => { const t = CV[0].sel.value; CV[0].sel.value = CV[1].sel.value; CV[1].sel.value = t; };
+fillSelects();
+
+// ---------- scoreboard ----------
+const simbars = document.getElementById('simbars'), azbars = document.getElementById('azbars');
+function mkRows(el, tag) {
+  el.innerHTML = Object.keys(MODES).map(k =>
+    `<div class="row" data-k="${k}"><span class="lbl">${NAMES[k]}</span><div class="bar"><div id="${tag}${k}" style="width:0;background:${k.startsWith('old') ? '#f85149' : '#3fb950'}"></div></div><span class="num" id="${tag}n${k}"></span></div>`).join('');
+  el.querySelectorAll('.row').forEach(r => r.onclick = () => setMode(r.dataset.k));
+}
+mkRows(simbars, 's'); mkRows(azbars, 'a');
+for (const k in AZ) { document.getElementById('a' + k).style.width = AZ[k] / 1069 * 100 + '%'; document.getElementById('an' + k).textContent = AZ[k].toFixed(0); }
+function score() {
+  const st = {}; let mx = 1;
+  for (const k in sims) { st[k] = sims[k].stats(); mx = Math.max(mx, st[k].jobs); }
+  for (const k in sims) {
+    document.getElementById('s' + k).style.width = st[k].jobs / mx * 100 + '%';
+    document.getElementById('sn' + k).textContent = st[k].jobs.toFixed(1);
+  }
+  document.querySelectorAll('.row').forEach(r => r.classList.toggle('sel', r.dataset.k === mode));
+  const c = st[mode];
+  document.getElementById('tJobs').textContent = c.jobs.toFixed(1);
+  document.getElementById('tP95').textContent = c.p95.toFixed(1);
+  document.getElementById('tIn').textContent = c.inApi;
+  document.getElementById('t429').textContent = c.rej.toFixed(0);
+  document.getElementById('tTO').textContent = c.to.toFixed(1);
+  document.getElementById('tP95').style.color = c.p95 > 5 ? '#f85149' : '#c9d1d9';
+  document.getElementById('t429').style.color = c.rej > 0 ? '#f85149' : '#c9d1d9';
+  document.getElementById('tTO').style.color = c.to > 0 ? '#f85149' : '#c9d1d9';
+}
+
+// ---------- legend + controls ----------
+document.getElementById('legend').innerHTML = [
+  ['network', COL.in], ['waiting at limiter', COL.lq], ['waiting for a thread', COL.ready], ['running on a thread', COL.cpu],
+  ['waiting for a connection', COL.wconn], ['DB query', COL.db], ['thread blocked on DB', '#f85149'], ['429 → retry', COL.rej], ['abandoned', COL.zombie]
+].map(([t, c]) => `<span class="chip"><i style="background:${c}"></i>${t}</span>`).join('');
+
+function sync() {
+  document.querySelectorAll('[data-m]').forEach(b => b.classList.toggle('on', b.dataset.m === mode));
+  document.querySelectorAll('[data-l]').forEach(b => b.classList.toggle('on', +b.dataset.l === load));
+  document.querySelectorAll('[data-s]').forEach(b => b.classList.toggle('on', +b.dataset.s === speed));
+  document.getElementById('pause').textContent = paused ? '▶' : '❚❚';
+}
+function setMode(m) { mode = m; sync(); if (stepMode) startStep(); }
+document.querySelectorAll('[data-m]').forEach(b => b.onclick = () => setMode(b.dataset.m));
+document.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { load = +b.dataset.l; reset(); sync(); if (stepMode) startStep(); });
+document.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { speed = +b.dataset.s; sync(); });
+document.getElementById('pause').onclick = () => { paused = !paused; sync(); };
+document.getElementById('reset').onclick = () => { reset(); if (stepMode) startStep(); };
+document.getElementById('trace').onclick = () => { const s = sims[mode]; s.trace = null; s.traceNext = true; };
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') { if (e.key === 'Enter') { sendOne(); e.target.blur(); } return; }
+  if (e.key === ' ') { paused = !paused; sync(); e.preventDefault(); }
+  const m = { 1: 'old1', 2: 'old2', 3: 'new1', 4: 'new2' }[e.key]; if (m) setMode(m);
+  if (e.key === 'ArrowRight' || e.key === 'n') { next(); e.preventDefault(); }
+  if (e.key === 'ArrowLeft' || e.key === 'b') { back(); e.preventDefault(); }
+  if (e.key === 's' || e.key === 'Enter') { sendOne(); e.preventDefault(); }
+});
+
+
+// ---------- step through one request ----------
+let stepMode = false, waitNext = false, snap = null, lastMsg = '', H = [], hi = -1, logArr = [];
+const backb = document.getElementById('backb'), stepno = document.getElementById('stepno');
+function fixSims(o) { for (const k in o) Object.setPrototypeOf(o[k], Sim.prototype); return o; }
+function record() {
+  H = H.slice(0, hi + 1);
+  H.push({ sims: structuredClone(sims), snap: structuredClone(snap), msg: lastMsg, log: logArr.slice() });
+  if (H.length > 300) H.shift();
+  hi = H.length - 1; updBtns();
+}
+function restore(e) {
+  sims = fixSims(structuredClone(e.sims)); snap = structuredClone(e.snap); lastMsg = e.msg; logArr = e.log.slice();
+  steplog.innerHTML = ''; for (const m of logArr) { const li = document.createElement('li'); li.textContent = m; steplog.appendChild(li); }
+  steplog.scrollTop = steplog.scrollHeight; waitNext = true; updBtns();
+}
+function updBtns() {
+  const b = stepMode && hi > 0; backb.disabled = !b; backb.style.opacity = b ? 1 : .4;
+  stepno.textContent = stepMode && hi >= 0 ? `stop ${hi + 1} / ${H.length}` : '';
+}
+function back() { if (stepMode && hi > 0) { hi--; restore(H[hi]); } }
+const steplog = document.getElementById('steplog'), nextb = document.getElementById('nextb'), stepb = document.getElementById('stepb');
+function events(s) {
+  const T = s.trace; if (!T) return [];
+  const q = T.req, isNew = s.impl === 'new', a = s.apis[q.api.i];
+  const c = { st: q.st, th: q.th ? q.th.id : null, conn: q.conn, z: q.zombie };
+  const p = snap; snap = c;
+  if (!p) return [`robot sends ${q.kind}` + (s.n === 2 ? ` → load balancer picks API ${q.api.i + 1}` : ' → API')];
+  if (c.z && !p.z) return ['robot waited 15 s and gave up · the server still works on it'];
+  if (c.st === p.st && c.th === p.th && c.conn === p.conn) return [];
+  const ev = [];
+  if (c.st === 'done') return ['robot gets its 200 · ' + q.kind + ' finished'];
+  if (p.st === 'hold' && c.st === 'in') ev.push('1 s is up · robot retries');
+  if (c.st === 'lq') ev.push(`all 64 permits taken · waits in line, #${a.lq.indexOf(q) + 1} of 32`);
+  if (c.st === 'rej') ev.push('line is full too · 429 Too Many Requests, Retry-After 1 s');
+  if (c.st === 'hold') ev.push('robot waits 1 s before trying again');
+  if ((p.st === 'in' || p.st === 'lq') && !['lq', 'rej', 'in'].includes(c.st))
+    ev.push(isNew ? `gets a permit (${a.active}/64 active)` : 'walks straight in · nothing limits how many get in');
+  if (p.conn !== null && c.conn !== p.conn) ev.push(`DB answered · connection #${p.conn + 1} goes back to the pool`);
+  if (p.th !== null && c.th === null) {
+    if (c.st === 'db' || c.st === 'wconn') ev.push(`ASYNC: thread T${p.th} is set FREE while the DB works`);
+    else if (c.st === 'out') ev.push(`finished · thread T${p.th} released`);
+  }
+  if (c.st === 'ready' && p.st !== 'ready')
+    ev.push(isNew ? 'waits for any free thread' : `no free thread · joins the pile (${a.ready.length} waiting)`);
+  if (c.th !== null && c.th !== p.th)
+    ev.push(q.idx > 0 && isNew
+      ? `continues on thread T${c.th} (any free thread will do)`
+      : `gets thread T${c.th} · runs code on the CPU`);
+  else if (c.st === 'cpu' && p.st !== 'cpu') ev.push(`runs code on the CPU, still thread T${c.th}`);
+  if (c.st === 'db' && c.conn !== null && c.conn !== p.conn)
+    ev.push(`borrows connection #${c.conn + 1} · query sent to PostgreSQL` + (c.th !== null ? ` · thread T${c.th} stays BLOCKED waiting` : ''));
+  if (c.st === 'wconn' && p.st !== 'wconn')
+    ev.push('all 25 connections busy · waits for one' + (c.th !== null ? ` · still holding thread T${c.th}` : ' · holding no thread'));
+  if (c.st === 'out' && p.st !== 'out') ev.push('response heads back to the robot');
+  if (c.st === 'cpu' && ev.length) {
+    const nC = a.threads.filter(th => th.req && th.req.st === 'cpu').length;
+    ev.push(`${nC} thread${nC > 1 ? 's' : ''} share the ${P.cores} CPU cores` + (nC > P.cores ? ` → each runs at ${Math.round(P.cores / nC * 100)}% speed` : ' → full speed'));
+  }
+  return ev;
+}
+function addLog(ev) {
+  lastMsg = ev.join(' · ');
+  for (const e of ev) { const li = document.createElement('li'); li.textContent = e; steplog.appendChild(li); logArr.push(e); }
+  steplog.scrollTop = steplog.scrollHeight;
+}
+function startStep() {
+  const s = sims[mode]; s.trace = null; s.traceNext = true; snap = null; lastMsg = ''; waitNext = false; steplog.innerHTML = '';
+  H = []; hi = -1; logArr = []; updBtns();
+}
+function setStep(on) {
+  stepMode = on; stepb.classList.toggle('on', on);
+  nextb.disabled = !on; nextb.style.opacity = on ? 1 : .4;
+  if (on) startStep(); else { waitNext = false; lastMsg = ''; H = []; hi = -1; }
+  updBtns();
+}
+function next() {
+  if (!stepMode) return;
+  if (hi < H.length - 1) { hi++; restore(H[hi]); return; }
+  const T = sims[mode].trace;
+  if (T && T.done && waitNext) startStep(); else waitNext = false;
+}
+stepb.onclick = () => setStep(!stepMode);
+function sendOne() {
+  const el = document.getElementById('sendN');
+  const n = Math.max(1, Math.min(2000, Math.floor(+el.value) || 1)); el.value = n;
+  for (const k in sims) for (let i = 0; i < n; i++) sims[k].sendOne();
+}
+document.getElementById('send1').onclick = sendOne;
+nextb.onclick = next;
+backb.onclick = back;
+
+const HP = new URLSearchParams(location.hash.slice(1));
+if (HP.get('m')) mode = HP.get('m');
+if (HP.get('l')) { load = +HP.get('l'); reset(); }
+if (HP.get('warm')) for (const k in sims) for (let i = 0; i < +HP.get('warm') * 100; i++) sims[k].step(0.01);
+if (HP.get("step")) {
+  setStep(true);
+  for (let k = 0; k < +HP.get("step"); k++) { waitNext = false; for (let i = 0; i < 20000; i++) { for (const m in sims) sims[m].step(0.01); const ev = events(sims[mode]); if (ev.length) { addLog(ev); record(); waitNext = true; break; } } }
+}
+if (HP.get("n")) { document.getElementById("sendN").value = HP.get("n"); sendOne(); for (const k in sims) for (let i = 0; i < 60; i++) sims[k].step(0.01); }
+if (HP.get("snapdemo")) {
+  for (const m of ['old1', 'new1']) {
+    mode = m; sims[m].trace = null; sims[m].traceNext = true;
+    for (let i = 0; i < 5000 && !(sims[m].trace && sims[m].trace.done); i++) for (const k in sims) sims[k].step(0.01);
+    document.getElementById('snapb').click();
+  }
+}
+if (HP.get("back")) for (let k = 0; k < +HP.get("back"); k++) back();
+if (HP.get("check")) {
+  const t = sims[mode].trace, ok = t && sims[mode].reqs.includes(t.req) && sims[mode].apis.includes(t.req.api) && (!t.req.th || sims[mode].apis[t.req.api.i].threads.includes(t.req.th));
+  document.title = 'CHECK ' + (ok ? 'OK' : 'BAD') + ' ' + hi + '/' + H.length + ' ' + (sims[mode] instanceof Sim);
+}
+if (HP.get("trace")) { sims[mode].traceNext = true; for (let i = 0; i < +HP.get('trace') * 100; i++) sims[mode].step(0.01); }
+resize(); sync(); score();
+let last = performance.now(), sc = 0;
+function frame(now) {
+  const dtr = Math.min(0.05, (now - last) / 1000); last = now;
+  if (!paused && !waitNext) {
+    const dt = dtr * speed, n = Math.max(1, Math.ceil(dt / 0.01));
+    for (let i = 0; i < n; i++) {
+      for (const k in sims) sims[k].step(dt / n);
+      if (stepMode) { const ev = events(sims[mode]); if (ev.length) { addLog(ev); record(); waitNext = true; break; } }
+    }
+  }
+  draw(dtr); drawTrace(); drawCompare();
+  if ((sc += dtr) > 0.3) { sc = 0; score(); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

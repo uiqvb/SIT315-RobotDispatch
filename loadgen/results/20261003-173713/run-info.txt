@@ -1,0 +1,8 @@
+﻿started:     2026-10-03T17:37:15.3724314+10:00
+machine:     AMD Ryzen 5 7640HS w/ Radeon 760M Graphics, 6 cores / 12 threads, 15.2 GB RAM, Microsoft Windows 11 Home Single Language 10.0.26200
+database:    postgres:18-alpine in Docker, max_connections=300, same machine
+generator:   NBomber, same machine, closed loop (each robot waits for every reply)
+parameters:  robots=10,50,100 duration=30s warmup=5s backlog=2000 jobs/robot repeats=1 versions=old,new
+old commit:  9faf8b1 (sit315)
+new commit:  39c4a0a (phase-3)
+loadgen:     1c5a2c3 (loadgen), uncommitted changes: True
